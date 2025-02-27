@@ -3,7 +3,6 @@ name: Docker Build and Push
 on:
   push:
     branches: [ "main" ]
-    tags: [ '[0-9]+.[0-9]+.[0-9]+' ]
   pull_request:
     branches: [ "main" ]
 
@@ -12,8 +11,19 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       images: ${{ steps.set-images.outputs.images }}
+      version: ${{ steps.get-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+      
+      - id: get-version
+        run: |
+          VERSION=$(cat VERSION)
+          if ! [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version format in VERSION file"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      
       - id: set-images
         run: |
           IMAGES=$(find . -name Dockerfile -exec dirname {} \; | sed 's/.\///' | jq -R -s -c 'split("\n")[:-1]')
@@ -44,11 +54,8 @@ jobs:
         with:
           images: pipecatai/${{ matrix.image }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha,format=short
+            type=raw,value=latest
+            type=raw,value=${{ needs.find-images.outputs.version }}
 
       - name: Build and push
         uses: docker/build-push-action@v5
