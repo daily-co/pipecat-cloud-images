@@ -5,7 +5,6 @@
 #
 
 import os
-import sys
 
 import aiohttp
 from dotenv import load_dotenv
@@ -24,11 +23,12 @@ from pipecat.transports.services.daily import DailyParams, DailyTransport
 
 load_dotenv(override=True)
 
-logger.remove(0)
-logger.add(sys.stderr, level="DEBUG")
 
+async def main(room_url: str, token: str, session_logger=None):
+    # Use the provided session logger if available, otherwise use the default logger
+    log = session_logger or logger
+    log.debug("Starting bot in room: {}", room_url)
 
-async def main(room_url: str, token: str):
     async with aiohttp.ClientSession() as session:
         transport = DailyTransport(
             room_url,
@@ -97,15 +97,18 @@ async def main(room_url: str, token: str):
 
         @rtvi.event_handler("on_client_ready")
         async def on_client_ready(rtvi):
+            log.debug("Client ready event received")
             await rtvi.set_bot_ready()
 
         @transport.event_handler("on_recording_started")
         async def on_recording_started(transport, status):
+            log.debug("Recording started: {}", status)
             await transport.on_recording_started(status)
             await rtvi.set_bot_ready()
 
         @transport.event_handler("on_first_participant_joined")
         async def on_first_participant_joined(transport, participant):
+            log.info("First participant joined: {}", participant["id"])
             # Capture the participant's transcription
             await transport.capture_participant_transcription(participant["id"])
             # Kick off the conversation
@@ -113,7 +116,7 @@ async def main(room_url: str, token: str):
 
         @transport.event_handler("on_participant_left")
         async def on_participant_left(transport, participant, reason):
-            print(f"Participant left: {participant}")
+            log.info("Participant left: {}", participant)
             await task.cancel()
 
         runner = PipelineRunner()
@@ -121,7 +124,23 @@ async def main(room_url: str, token: str):
         await runner.run(task)
 
 
-async def bot(config, room_url: str, token: str):
-    logger.info(f"Bot process initialized {room_url} {token}")
-    await main(room_url, token)
-    logger.info("Bot process completed")
+async def bot(config, room_url: str, token: str, session_id=None, session_logger=None):
+    """
+    Main bot entry point compatible with the FastAPI route handler.
+
+    Args:
+        config: The configuration object from the request body
+        room_url: The Daily room URL
+        token: The Daily room token
+        session_id: The session ID for logging
+        session_logger: The session-specific logger
+    """
+    log = session_logger or logger
+    log.info(f"Bot process initialized {room_url} {token}")
+
+    try:
+        await main(room_url, token, session_logger)
+        log.info("Bot process completed")
+    except Exception as e:
+        log.exception(f"Error in bot process: {str(e)}")
+        raise

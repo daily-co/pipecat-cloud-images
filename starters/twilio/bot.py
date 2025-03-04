@@ -6,7 +6,6 @@
 
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 from fastapi import WebSocket
@@ -28,11 +27,12 @@ from pipecat.transports.network.fastapi_websocket import (
 
 load_dotenv(override=True)
 
-logger.remove(0)
-logger.add(sys.stderr, level="DEBUG")
 
+async def main(ws: WebSocket, session_logger=None):
+    # Use the provided session logger if available, otherwise use the default logger
+    log = session_logger or logger
+    log.debug("Starting WebSocket bot")
 
-async def main(ws: WebSocket):
     start_data = ws.iter_text()
     await start_data.__anext__()
     call_data = json.loads(await start_data.__anext__())
@@ -102,11 +102,13 @@ async def main(ws: WebSocket):
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
+        log.info(f"Client connected: {client}")
         # Kick off the conversation
         await task.queue_frames([context_aggregator.user().get_context_frame()])
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
+        log.info(f"Client disconnected: {client}")
         await task.cancel()
 
     runner = PipelineRunner(handle_sigint=False, force_gc=True)
@@ -114,7 +116,20 @@ async def main(ws: WebSocket):
     await runner.run(task)
 
 
-async def bot(ws: WebSocket):
-    logger.info(f"Bot process initialized {ws}")
-    await main(ws)
-    logger.info("Bot process completed")
+async def bot(ws: WebSocket, session_logger=None):
+    """
+    Main bot entry point for WebSocket connections.
+
+    Args:
+        ws: The WebSocket connection
+        session_logger: The session-specific logger
+    """
+    log = session_logger or logger
+    log.info("WebSocket bot process initialized")
+
+    try:
+        await main(ws, session_logger)
+        log.info("WebSocket bot process completed")
+    except Exception as e:
+        log.exception(f"Error in WebSocket bot process: {str(e)}")
+        raise
