@@ -5,9 +5,12 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from os import environ
 from typing import Annotated, Any
+import sys
 
 from fastapi import FastAPI, Body, Header, WebSocket
 from fastapi.websockets import WebSocketState
+
+from loguru import logger
 
 from waiting_server import WaitingServer, Config
 
@@ -23,23 +26,34 @@ executor = ProcessPoolExecutor(
     mp_context=multiprocessing.get_context("fork")
 )
 
+session_logger_format = (
+    "{time:YYYY-MM-DD HH:mm:ss.SSS} | "
+    "{level: <8} | "
+    "{name}:{function}:{line} | "
+    "{extra[session_id]} - {message}"
+)
+logger.remove()
+logger.add(sys.stderr, format=session_logger_format)
+logger.configure(extra={"session_id":"NONE"})
+
 @app.post("/bot")
-async def handle_bot_request(body: Any = Body(None), x_daily_room_url: Annotated[str | None, Header()] = None, x_daily_room_token: Annotated[str | None, Header()] = None):
+async def handle_bot_request(body: Any = Body(None), x_daily_room_url: Annotated[str | None, Header()] = None, x_daily_room_token: Annotated[str | None, Header()] = None, x_daily_session_id: Annotated[str | None, Header()] = None):
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(executor, run_default_bot, body, x_daily_room_url, x_daily_room_token)
+    await loop.run_in_executor(executor, run_default_bot, body, x_daily_room_url, x_daily_room_token, x_daily_session_id)
     return {}
 
-def run_default_bot(body, x_daily_room_url, x_daily_room_token):
+def run_default_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
+    session_logger = logger.bind(session_id=x_daily_session_id)
     loop = asyncio.new_event_loop()
-    response = loop.run_until_complete(bot(body, x_daily_room_url, x_daily_room_token))
+    response = loop.run_until_complete(bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id, session_logger))
     loop.close()
     return response
 
 @app.websocket("/ws")
-@app.websocket("/ws/twilio")
-async def handle_websocket(ws: WebSocket):
+async def handle_websocket(ws: WebSocket, x_daily_session_id: Annotated[str | None, Header()] = None):
     await ws.accept()
-    await bot(ws)
+    session_logger = logger.bind(session_id=x_daily_session_id)
+    await bot(ws, session_logger)
     if ws.state == WebSocketState.CONNECTED:
         await ws.close()
 
