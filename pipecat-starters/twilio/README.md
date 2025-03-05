@@ -1,4 +1,4 @@
-# Twilio Voice AI Starter
+# Twilio Voice Bot Starter
 
 A telephone-based conversational agent built with Pipecat that connects to Twilio for voice calls.
 

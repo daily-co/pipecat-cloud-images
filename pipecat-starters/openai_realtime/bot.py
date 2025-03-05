@@ -16,11 +16,20 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
-from pipecat.services.cartesia import CartesiaTTSService
-from pipecat.services.deepgram import DeepgramSTTService
-from pipecat.services.openai import OpenAILLMService
+from pipecat.processors.aggregators.openai_llm_context import (
+    OpenAILLMContext,
+)
+from pipecat.processors.frameworks.rtvi import (
+    RTVIConfig,
+    RTVIObserver,
+    RTVIProcessor,
+)
+from pipecat.services.openai_realtime_beta import (
+    InputAudioTranscription,
+    OpenAIRealtimeBetaLLMService,
+    SessionProperties,
+    TurnDetection,
+)
 from pipecat.transports.services.daily import DailyParams, DailyTransport
 
 load_dotenv(override=True)
@@ -30,9 +39,8 @@ logger.add(sys.stderr, level="DEBUG")
 
 
 async def main(room_url: str, token: str, session_logger=None):
-    # Use the provided session logger if available, otherwise use the default logger
     log = session_logger or logger
-    log.debug("Starting bot in room: {}", room_url)
+    log.debug("starting bot in room: {}", room_url)
 
     async with aiohttp.ClientSession() as session:
         transport = DailyTransport(
@@ -40,51 +48,50 @@ async def main(room_url: str, token: str, session_logger=None):
             token,
             "Voice AI Bot",
             DailyParams(
+                audio_in_enabled=True,
                 audio_out_enabled=True,
                 vad_enabled=True,
                 vad_analyzer=SileroVADAnalyzer(),
-                transcription_enabled=True,
+                vad_audio_passthrough=True,
+                transcription_enabled=False,
             ),
         )
 
-        # Configure your STT, LLM, and TTS services here
-        # Swap out different processors or properties to customize your bot
-        stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
-        llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4o")
-        tts = CartesiaTTSService(
-            api_key=os.getenv("CARTESIA_API_KEY"),
-            voice_id="79a125e8-cd45-4c13-8a67-188112f4dd22",
+        session_properties = SessionProperties(
+            input_audio_transcription=InputAudioTranscription(),
+            # Set openai TurnDetection parameters. Not setting this at all will turn it
+            # on by default
+            turn_detection=TurnDetection(silence_duration_ms=1000),
+            # Or set to False to disable openai turn detection and use transport VAD
+            # turn_detection=False,
+            # tools=tools,
+            instructions="""You are Chatbot, a friendly, helpful robot. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way, but keep your responses brief. Start by introducing yourself.""",
         )
 
-        # Set up the initial context for the conversation
-        # You can specified initial system and assistant messages here
-        messages = [
-            {
-                "role": "system",
-                "content": "You are Chatbot, a friendly, helpful robot. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way, but keep your responses brief. Start by introducing yourself.",
-            },
-        ]
+        llm = OpenAIRealtimeBetaLLMService(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            session_properties=session_properties,
+            start_audio_paused=False,
+        )
 
         # Define and register tools as required
         tools = NotGiven()
 
         # This sets up the LLM context by providing messages and tools
-        context = OpenAILLMContext(messages, tools)
+        context = OpenAILLMContext([], tools)
         context_aggregator = llm.create_context_aggregator(context)
 
         # RTVI events for Pipecat client UI
         rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
-        # A core voice AI pipeline
+        # A core speech-to-speech AI pipeline
         # Add additional processors to customize the bot's behavior
         pipeline = Pipeline(
             [
                 transport.input(),
                 rtvi,
-                stt,
                 context_aggregator.user(),
                 llm,
-                tts,
                 transport.output(),
                 context_aggregator.assistant(),
             ]
@@ -124,7 +131,7 @@ async def main(room_url: str, token: str, session_logger=None):
             log.info("Participant left: {}", participant)
             await task.cancel()
 
-        runner = PipelineRunner(handle_sigint=False, force_gc=True)
+        runner = PipelineRunner()
 
         await runner.run(task)
 

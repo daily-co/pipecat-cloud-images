@@ -11,16 +11,21 @@ import aiohttp
 from dotenv import load_dotenv
 from loguru import logger
 from openai._types import NotGiven
-
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
-from pipecat.services.cartesia import CartesiaTTSService
-from pipecat.services.deepgram import DeepgramSTTService
-from pipecat.services.openai import OpenAILLMService
+from pipecat.processors.aggregators.openai_llm_context import (
+    OpenAILLMContext,
+)
+from pipecat.processors.frameworks.rtvi import (
+    RTVIConfig,
+    RTVIObserver,
+    RTVIProcessor,
+)
+from pipecat.services.gemini_multimodal_live.gemini import (
+    GeminiMultimodalLiveLLMService,
+)
 from pipecat.transports.services.daily import DailyParams, DailyTransport
 
 load_dotenv(override=True)
@@ -30,9 +35,8 @@ logger.add(sys.stderr, level="DEBUG")
 
 
 async def main(room_url: str, token: str, session_logger=None):
-    # Use the provided session logger if available, otherwise use the default logger
     log = session_logger or logger
-    log.debug("Starting bot in room: {}", room_url)
+    log.debug("starting bot in room: {}", room_url)
 
     async with aiohttp.ClientSession() as session:
         transport = DailyTransport(
@@ -43,30 +47,26 @@ async def main(room_url: str, token: str, session_logger=None):
                 audio_out_enabled=True,
                 vad_enabled=True,
                 vad_analyzer=SileroVADAnalyzer(),
-                transcription_enabled=True,
+                vad_audio_passthrough=True,
             ),
         )
 
-        # Configure your STT, LLM, and TTS services here
-        # Swap out different processors or properties to customize your bot
-        stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
-        llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4o")
-        tts = CartesiaTTSService(
-            api_key=os.getenv("CARTESIA_API_KEY"),
-            voice_id="79a125e8-cd45-4c13-8a67-188112f4dd22",
+        llm = GeminiMultimodalLiveLLMService(
+            api_key=os.getenv("GOOGLE_API_KEY"),
+            voice_id="Aoede",  # Puck, Charon, Kore, Fenrir, Aoede
+            transcribe_user_audio=True,
+            transcribe_model_audio=True,
         )
-
-        # Set up the initial context for the conversation
-        # You can specified initial system and assistant messages here
-        messages = [
-            {
-                "role": "system",
-                "content": "You are Chatbot, a friendly, helpful robot. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way, but keep your responses brief. Start by introducing yourself.",
-            },
-        ]
 
         # Define and register tools as required
         tools = NotGiven()
+
+        messages = [
+            {
+                "role": "user",
+                "content": "You are Chatbot, a friendly, helpful robot. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way, but keep your responses brief. Start by introducing yourself.",
+            }
+        ]
 
         # This sets up the LLM context by providing messages and tools
         context = OpenAILLMContext(messages, tools)
@@ -81,10 +81,8 @@ async def main(room_url: str, token: str, session_logger=None):
             [
                 transport.input(),
                 rtvi,
-                stt,
                 context_aggregator.user(),
                 llm,
-                tts,
                 transport.output(),
                 context_aggregator.assistant(),
             ]
@@ -116,6 +114,13 @@ async def main(room_url: str, token: str, session_logger=None):
             log.info("First participant joined: {}", participant["id"])
             # Capture the participant's transcription
             await transport.capture_participant_transcription(participant["id"])
+            # Capture participant cam and screen video
+            await transport.capture_participant_video(
+                participant["id"], framerate=1, video_source="camera"
+            )
+            await transport.capture_participant_video(
+                participant["id"], framerate=1, video_source="screenVideo"
+            )
             # Kick off the conversation
             await task.queue_frames([context_aggregator.user().get_context_frame()])
 
@@ -124,7 +129,7 @@ async def main(room_url: str, token: str, session_logger=None):
             log.info("Participant left: {}", participant)
             await task.cancel()
 
-        runner = PipelineRunner(handle_sigint=False, force_gc=True)
+        runner = PipelineRunner()
 
         await runner.run(task)
 
