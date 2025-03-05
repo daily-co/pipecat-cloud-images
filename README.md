@@ -6,8 +6,8 @@ This repository contains source code for the official Pipecat Cloud agent images
 
 ## Repository Structure
 
-- **[base](./base)**: Source code for the `pipecatai/base` Docker image, which serves as the foundation for Pipecat Cloud agents.
-- **[starters](./starters)**: Ready-to-use agent templates for various use cases.
+- **[pipecat-base](./pipecat-base)**: Source code for the `dailyco/pipecat-base` Docker image, which serves as the foundation for Pipecat Cloud agents.
+- **[pipecat-starters](./pipecat-starters)**: Ready-to-use agent templates for various use cases.
 
 ## Base Image
 
@@ -18,14 +18,14 @@ The base image provides the runtime environment and interface required to run ag
 - Platform integration
 - Logging and monitoring
 
-The official base image is available on Docker Hub: [pipecatai/base](https://hub.docker.com/r/pipecatai/base)
+The official base image is available on Docker Hub: [dailyco/pipecat-base](https://hub.docker.com/r/dailyco/pipecat-base)
 
 ## Starter Templates
 
 Starter templates offer pre-built configurations for common agent types:
 
-- **[voice](./starters/voice)**: Voice conversation agent with STT, LLM and TTS
-- **[twilio](./starters/twilio)**: Telephony agent that works with Twilio
+- **[voice](./pipecat-starters/voice)**: Voice conversation agent with STT, LLM and TTS
+- **[twilio](./pipecat-starters/twilio)**: Telephony agent that works with Twilio
 
 Each starter includes a functioning implementation and Dockerfile. They serve as a starting point for building an agent tailored to your use case.
 
