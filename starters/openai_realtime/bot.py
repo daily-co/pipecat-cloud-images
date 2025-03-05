@@ -1,4 +1,9 @@
-import asyncio
+#
+# Copyright (c) 2025, Daily
+#
+# SPDX-License-Identifier: BSD 2-Clause License
+#
+
 import os
 import sys
 
@@ -6,7 +11,6 @@ import aiohttp
 from dotenv import load_dotenv
 from loguru import logger
 from openai._types import NotGiven
-
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
@@ -27,7 +31,6 @@ from pipecat.services.openai_realtime_beta import (
     TurnDetection,
 )
 from pipecat.transports.services.daily import DailyParams, DailyTransport
-
 
 load_dotenv(override=True)
 
@@ -81,7 +84,8 @@ async def main(room_url: str, token: str, session_logger=None):
         # RTVI events for Pipecat client UI
         rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
-        # We use a parallel pipeline to handle the two LLMs in parallel.
+        # A core speech-to-speech AI pipeline
+        # Add additional processors to customize the bot's behavior
         pipeline = Pipeline(
             [
                 transport.input(),
@@ -105,10 +109,12 @@ async def main(room_url: str, token: str, session_logger=None):
 
         @rtvi.event_handler("on_client_ready")
         async def on_client_ready(rtvi):
+            log.debug("Client ready event received")
             await rtvi.set_bot_ready()
 
         @transport.event_handler("on_recording_started")
         async def on_recording_started(transport, status):
+            log.debug("Recording started: {}", status)
             await transport.on_recording_started(status)
             await rtvi.set_bot_ready()
 
@@ -122,7 +128,7 @@ async def main(room_url: str, token: str, session_logger=None):
 
         @transport.event_handler("on_participant_left")
         async def on_participant_left(transport, participant, reason):
-            print(f"Participant left: {participant}")
+            log.info("Participant left: {}", participant)
             await task.cancel()
 
         runner = PipelineRunner()
@@ -131,8 +137,7 @@ async def main(room_url: str, token: str, session_logger=None):
 
 
 async def bot(config, room_url: str, token: str, session_id=None, session_logger=None):
-    """
-    Main bot entry point compatible with the FastAPI route handler.
+    """Main bot entry point compatible with the FastAPI route handler.
 
     Args:
         config: The configuration object from the request body
@@ -150,29 +155,3 @@ async def bot(config, room_url: str, token: str, session_id=None, session_logger
     except Exception as e:
         log.exception(f"Error in bot process: {str(e)}")
         raise
-
-
-###########################
-# for local test run only #
-###########################
-LOCAL_RUN = os.getenv("LOCAL_RUN")
-if LOCAL_RUN:
-    import asyncio
-    from local_runner import configure
-    import webbrowser
-
-
-async def local_main():
-    async with aiohttp.ClientSession() as session:
-        (room_url, token) = await configure(session)
-        logger.warning(f"_")
-        logger.warning(f"_")
-        logger.warning(f"Talk to your voice agent here: {room_url}")
-        logger.warning(f"_")
-        logger.warning(f"_")
-        webbrowser.open(room_url)
-        await main(room_url, token)
-
-
-if LOCAL_RUN and __name__ == "__main__":
-    asyncio.run(local_main())

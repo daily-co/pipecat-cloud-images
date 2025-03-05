@@ -2,7 +2,7 @@
 
 This repository contains a starter template for building a voice-based AI agent using OpenAI's Realtime API with Pipecat and deploying it to Pipecat Cloud.
 
-## What's Included
+## Features
 
 - A ready-to-run voice bot powered by:
   - OpenAI Realtime Beta API (integrated audio streaming, STT, LLM, and TTS)
@@ -10,12 +10,9 @@ This repository contains a starter template for building a voice-based AI agent 
 - Real-time voice activity detection (VAD) using Silero
 - Complete Dockerfile for containerization
 
-## Getting Started
+## Required API Keys
 
-This template requires the following API keys:
-
-- OpenAI API key (with access to Realtime API)
-- Daily room URL and token (provided by Pipecat Cloud when deploying)
+- `OPENAI_API_KEY`
 
 ## Customizing Your Bot
 
@@ -87,49 +84,4 @@ Popular options include:
 
 ## Deployment
 
-### Prerequisites
-
-- Docker installed on your system
-- [Pipecat Cloud account](https://pipecat.daily.co)
-- Python 3.10+
-
-### Building and Deploying
-
-For detailed instructions on building, deploying, and running your agent, please refer to the [Pipecat Cloud documentation](https://docs.pipecat.daily.co/quickstart).
-
-Quick reference:
-
-1. **Build the Docker image**:
-
-   ```shell
-   docker build --platform=linux/arm64 -t openai-realtime-bot:latest .
-   ```
-
-2. **Push to a container registry**:
-
-   ```shell
-   docker tag openai-realtime-bot:latest your-repository/openai-realtime-bot:latest
-   docker push your-repository/openai-realtime-bot:latest
-   ```
-
-3. **Deploy to Pipecat Cloud**:
-
-   ```shell
-   pipecat deploy realtime-bot your-repository/openai-realtime-bot:latest --secrets my-secrets
-   ```
-
-4. **Start a session**:
-   ```shell
-   pipecat agent start realtime-bot --use-daily
-   ```
-
-## Documentation
-
-For more information on the Pipecat framework and Pipecat Cloud, see the official documentation:
-
-- [Pipecat Cloud Documentation](https://docs.pipecat.daily.co)
-- [Pipecat Framework Documentation](https://docs.pipecat.ai)
-
-## License
-
-This project is licensed under the BSD 2-Clause License - see the LICENSE file for details.
+See the [top-level README](../README.md) for deployment instructions.

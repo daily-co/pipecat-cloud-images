@@ -5,23 +5,27 @@
 #
 
 import os
+import sys
 
 import aiohttp
 from dotenv import load_dotenv
 from loguru import logger
 from openai._types import NOT_GIVEN, NotGiven
+
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.services.anthropic import AnthropicLLMContext
 from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
+from pipecat.services.anthropic import AnthropicLLMContext, AnthropicLLMService
 from pipecat.services.cartesia import CartesiaTTSService
 from pipecat.services.deepgram import DeepgramSTTService
-from pipecat.services.anthropic import AnthropicLLMService
 from pipecat.transports.services.daily import DailyParams, DailyTransport
 
 load_dotenv(override=True)
+
+logger.remove(0)
+logger.add(sys.stderr, level="DEBUG")
 
 
 class AnthropicContextWithVisionTool(AnthropicLLMContext):
@@ -154,11 +158,10 @@ async def main(room_url: str, token: str, session_logger=None):
         # RTVI events for Pipecat client UI
         rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
-        # A core voice AI pipeline
-        # Add additional processors to customize the bot's behavior
-
         context.register_get_image_function(llm, rtvi)
 
+        # A core voice AI pipeline
+        # Add additional processors to customize the bot's behavior
         pipeline = Pipeline(
             [
                 transport.input(),
@@ -218,8 +221,7 @@ async def main(room_url: str, token: str, session_logger=None):
 
 
 async def bot(config, room_url: str, token: str, session_id=None, session_logger=None):
-    """
-    Main bot entry point compatible with the FastAPI route handler.
+    """Main bot entry point compatible with the FastAPI route handler.
 
     Args:
         config: The configuration object from the request body
@@ -237,29 +239,3 @@ async def bot(config, room_url: str, token: str, session_id=None, session_logger
     except Exception as e:
         log.exception(f"Error in bot process: {str(e)}")
         raise
-
-
-###########################
-# for local test run only #
-###########################
-LOCAL_RUN = os.getenv("LOCAL_RUN")
-if LOCAL_RUN:
-    import asyncio
-    from local_runner import configure
-    import webbrowser
-
-
-async def local_main():
-    async with aiohttp.ClientSession() as session:
-        (room_url, token) = await configure(session)
-        logger.warning(f"_")
-        logger.warning(f"_")
-        logger.warning(f"Talk to your voice agent here: {room_url}")
-        logger.warning(f"_")
-        logger.warning(f"_")
-        webbrowser.open(room_url)
-        await main(room_url, token)
-
-
-if LOCAL_RUN and __name__ == "__main__":
-    asyncio.run(local_main())
