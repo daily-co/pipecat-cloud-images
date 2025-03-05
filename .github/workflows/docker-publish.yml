@@ -26,7 +26,7 @@ jobs:
       
       - id: set-images
         run: |
-          IMAGES=$(find starters -name Dockerfile -exec dirname {} \; | jq -R -s -c 'split("\n")[:-1]')
+          IMAGES=$(find pipecat-starters -name Dockerfile -exec dirname {} \; | jq -R -s -c 'split("\n")[:-1]')
           echo "images=$IMAGES" >> $GITHUB_OUTPUT
   build-base:
     runs-on: ubuntu-latest
