@@ -124,7 +124,7 @@ async def main(room_url: str, token: str, session_logger=None):
             log.info("Participant left: {}", participant)
             await task.cancel()
 
-        runner = PipelineRunner()
+        runner = PipelineRunner(handle_sigint=False, force_gc=True)
 
         await runner.run(task)
 
