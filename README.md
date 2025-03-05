@@ -1,3 +1,5 @@
+<!-- @format -->
+
 # Pipecat Cloud Agent Images
 
 [![Docs](https://img.shields.io/badge/Documentation-blue)](https://docs.pipecat.daily.co) [![Discord](https://img.shields.io/discord/1217145424381743145)](https://discord.gg/dailyco)
@@ -26,6 +28,10 @@ Starter templates offer pre-built configurations for common agent types:
 
 - **[voice](./pipecat-starters/voice)**: Voice conversation agent with STT, LLM and TTS
 - **[twilio](./pipecat-starters/twilio)**: Telephony agent that works with Twilio
+- **[natural conversation](./pipecat-starters/natural_conversation)**: Text chat agent focused on natural dialogue
+- **[openai realtime](./pipecat-starters/openai_realtime)**: Agent using OpenAI's streaming capabilities
+- **[gemini multimodal live](./pipecat-starters/gemini_multimodal_live)**: Multimodal agent using Google's Gemini models
+- **[vision](./pipecat-starters/vision)**: Computer vision agent that can analyze images
 
 Each starter includes a functioning implementation and Dockerfile. They serve as a starting point for building an agent tailored to your use case.
 
