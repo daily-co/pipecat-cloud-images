@@ -1,6 +1,6 @@
 # Pipecat Cloud Base Image
 
-Source code for the official Pipecat Cloud base agent image (`pipecatai/base`).
+Source code for the official Pipecat Cloud base agent image (`dailyco/pipecat-base`).
 
 ## Overview
 
@@ -16,7 +16,7 @@ This image provides the foundational runtime environment for running agents on P
 When creating your own agent, use this base image in your Dockerfile:
 
 ```Dockerfile
-FROM pipecatai/base:latest
+FROM dailyco/pipecat-base:latest
 COPY ./requirements.txt requirements.txt
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 COPY ./bot.py bot.py
