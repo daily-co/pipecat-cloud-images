@@ -344,7 +344,10 @@ class OutputGate(FrameProcessor):
                 break
 
 
-async def main(room_url: str, token: str):
+async def main(room_url: str, token: str, session_logger=None):
+    log = session_logger or logger
+    log.debug("starting bot in room: {}", room_url)
+
     async with aiohttp.ClientSession() as session:
         transport = DailyTransport(
             room_url,
@@ -373,7 +376,10 @@ async def main(room_url: str, token: str):
         # Set up the initial context for the conversation
         # You can specified initial system and assistant messages here
         messages = [
-            {"role": "system", "content": classifier_statement},
+            {
+                "role": "system",
+                "content": """You are Chatbot, a friendly, helpful robot. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way, but keep your responses brief. Start by introducing yourself.""",
+            },
         ]
 
         # Define and register tools as required
@@ -405,7 +411,7 @@ async def main(room_url: str, token: str):
 
         # Sometimes the LLM will fail detecting if a user has completed a
         # sentence, this will wake up the notifier if that happens.
-        user_idle = UserIdleProcessor(notifier=user_idle_notifier, timeout=5.0)
+        user_idle = UserIdleProcessor(callback=user_idle_notifier, timeout=5.0)
 
         # We start with the gate open because we send an initial context frame
         # to start the conversation.
@@ -473,6 +479,7 @@ async def main(room_url: str, token: str):
 
         @transport.event_handler("on_first_participant_joined")
         async def on_first_participant_joined(transport, participant):
+            log.info("First participant joined: {}", participant["id"])
             # Capture the participant's transcription
             await transport.capture_participant_transcription(participant["id"])
             # Kick off the conversation
@@ -488,7 +495,49 @@ async def main(room_url: str, token: str):
         await runner.run(task)
 
 
-async def bot(config, room_url: str, token: str):
-    logger.info(f"Bot process initialized {room_url} {token}")
-    await main(room_url, token)
-    logger.info("Bot process completed")
+async def bot(config, room_url: str, token: str, session_id=None, session_logger=None):
+    """
+    Main bot entry point compatible with the FastAPI route handler.
+
+    Args:
+        config: The configuration object from the request body
+        room_url: The Daily room URL
+        token: The Daily room token
+        session_id: The session ID for logging
+        session_logger: The session-specific logger
+    """
+    log = session_logger or logger
+    log.info(f"Bot process initialized {room_url} {token}")
+
+    try:
+        await main(room_url, token, session_logger)
+        log.info("Bot process completed")
+    except Exception as e:
+        log.exception(f"Error in bot process: {str(e)}")
+        raise
+
+
+###########################
+# for local test run only #
+###########################
+LOCAL_RUN = os.getenv("LOCAL_RUN")
+if LOCAL_RUN:
+    import asyncio
+    from local_runner import configure
+    import webbrowser
+
+
+async def local_main():
+    async with aiohttp.ClientSession() as session:
+        (room_url, token) = await configure(session)
+        logger.warning(f"_")
+        logger.warning(f"_")
+        logger.warning(f"Talk to your voice agent here: {room_url}")
+        logger.warning(f"_")
+        logger.warning(f"_")
+        webbrowser.open(room_url)
+        await main(room_url, token)
+
+
+if LOCAL_RUN and __name__ == "__main__":
+    asyncio.run(local_main())
