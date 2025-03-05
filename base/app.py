@@ -2,7 +2,6 @@
 import asyncio
 import multiprocessing
 
-from concurrent.futures import ProcessPoolExecutor
 from os import environ
 from typing import Annotated, Any
 import sys
@@ -21,11 +20,6 @@ app = FastAPI()
 server_config = Config(environ.get("SHUTDOWN_TIMEOUT", 7200), app, host="0.0.0.0", port=int(environ.get("PORT", 8080)))
 server = WaitingServer(server_config)
 
-executor = ProcessPoolExecutor(
-    max_workers=int(environ.get("CONCURRENCY_LIMIT", 10)),
-    mp_context=multiprocessing.get_context("fork")
-)
-
 session_logger_format = (
     "{time:YYYY-MM-DD HH:mm:ss.SSS} | "
     "{level: <8} | "
@@ -38,18 +32,12 @@ logger.configure(extra={"session_id":"NONE"})
 
 @app.post("/bot")
 async def handle_bot_request(body: Any = Body(None), x_daily_room_url: Annotated[str | None, Header()] = None, x_daily_room_token: Annotated[str | None, Header()] = None, x_daily_session_id: Annotated[str | None, Header()] = None, proxy_connection: Annotated[str | None, Header()] = None):
-    logger.info("Received request.")
-    logger.info(f"Proxy-connection header: {proxy_connection}")
     await run_default_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id)
-    logger.info("Run complete.  Returning response.")
     return {}
 
 async def run_default_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
     session_logger = logger.bind(session_id=x_daily_session_id)
-    logger.info("Base passing off to bot.")
     response = await bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id, session_logger)
-    logger.info("Bot run is complete.  Closing event loop.")
-    logger.info("Inner method complete.")
     return response
 
 @app.websocket("/ws")
