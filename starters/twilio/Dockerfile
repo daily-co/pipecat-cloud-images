@@ -1,4 +1,4 @@
-FROM pipecatai/base:latest
+FROM dailyco/pipecat-base:latest
 
 COPY ./requirements.txt requirements.txt
 
