@@ -1,0 +1,265 @@
+#
+# Copyright (c) 2025, Daily
+#
+# SPDX-License-Identifier: BSD 2-Clause License
+#
+
+import os
+
+import aiohttp
+from dotenv import load_dotenv
+from loguru import logger
+from openai._types import NOT_GIVEN, NotGiven
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.services.anthropic import AnthropicLLMContext
+from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
+from pipecat.services.cartesia import CartesiaTTSService
+from pipecat.services.deepgram import DeepgramSTTService
+from pipecat.services.anthropic import AnthropicLLMService
+from pipecat.transports.services.daily import DailyParams, DailyTransport
+
+load_dotenv(override=True)
+
+
+class AnthropicContextWithVisionTool(AnthropicLLMContext):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.set_tools(self._tools)
+        self._llm = None
+        self._rtvi = None
+        self._video_participant_id = None
+
+    def set_video_participant_id(self, video_participant_id):
+        self._video_participant_id = video_participant_id
+
+    async def get_image(
+        self, function_name, tool_call_id, arguments, llm, context, result_callback
+    ):
+        if self._llm and self._rtvi:
+            text_context = arguments["text_context"]
+            await self._llm.request_image_frame(
+                user_id=self._video_participant_id, text_content=text_context
+            )
+            await self._rtvi.handle_function_call(
+                function_name, tool_call_id, arguments, llm, context, None
+            )
+
+    def register_get_image_function(self, llm, rtvi):
+        self._llm = llm
+        self._rtvi = rtvi
+        self._llm.register_function("get_image", self.get_image)
+
+    def set_tools(self, tools: dict):
+        if isinstance(tools, NotGiven):
+            tools = []
+        super().set_tools(tools)
+        self._add_get_image_tool()
+
+    def _add_get_image_tool(self):
+        if self._tools is NOT_GIVEN:
+            self._tools = []
+        self._tools.append(
+            {
+                "name": "get_image",
+                "description": "Retrieve an image from the available camera or video stream.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "text_context": {
+                            "type": "string",
+                            "description": "Relevant text about the image request. For example, this could be the question that a user is asking about the camera or video stream.",
+                        }
+                    },
+                    "required": ["text_context"],
+                },
+            }
+        )
+
+
+async def main(room_url: str, token: str, session_logger=None):
+    # Use the provided session logger if available, otherwise use the default logger
+    log = session_logger or logger
+    log.debug("Starting bot in room: {}", room_url)
+
+    async with aiohttp.ClientSession() as session:
+        transport = DailyTransport(
+            room_url,
+            token,
+            "Voice AI Bot",
+            DailyParams(
+                audio_out_enabled=True,
+                vad_enabled=True,
+                vad_analyzer=SileroVADAnalyzer(),
+                transcription_enabled=True,
+            ),
+        )
+
+        # Configure your STT, LLM, and TTS services here
+        # Swap out different processors or properties to customize your bot
+        stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
+        llm = AnthropicLLMService(
+            api_key=os.getenv("ANTHROPIC_API_KEY"),
+            model="claude-3-5-sonnet-latest",
+            enable_prompt_caching_beta=True,
+        )
+        tts = CartesiaTTSService(
+            api_key=os.getenv("CARTESIA_API_KEY"),
+            voice_id="79a125e8-cd45-4c13-8a67-188112f4dd22",
+        )
+
+        # Set up the initial context for the conversation
+        # You can specified initial system and assistant messages here
+        system_prompt = """You are a helpful assistant who converses with a user and answers questions. Respond concisely to general questions.
+
+        Your response will be turned into speech so use only simple words and punctuation.
+
+        You have access to one tools: get_image.
+
+        You can answer questions about the user's video stream using the get_image tool. Some examples of phrases that indicate you should use the get_image tool are:
+        - What do you see?
+        - What's in the video?
+        - Can you describe the video?
+        - Tell me about what you see.
+        - Tell me something interesting about what you see.
+        - What's happening in the video?
+
+        If you need to use a tool, simply use the tool. Do not tell the user the tool you are using. Be brief and concise."""
+
+        messages = [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": system_prompt,
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": "Start the conversation by introducing yourself.",
+            },
+        ]
+
+        # Define and register tools as required
+        tools = NotGiven()
+
+        # This sets up the LLM context by providing messages and tools
+        context = AnthropicContextWithVisionTool(messages, tools)
+        context_aggregator = llm.create_context_aggregator(context)
+
+        # RTVI events for Pipecat client UI
+        rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
+
+        # A core voice AI pipeline
+        # Add additional processors to customize the bot's behavior
+
+        context.register_get_image_function(llm, rtvi)
+
+        pipeline = Pipeline(
+            [
+                transport.input(),
+                rtvi,
+                stt,
+                context_aggregator.user(),
+                llm,
+                tts,
+                transport.output(),
+                context_aggregator.assistant(),
+            ]
+        )
+
+        task = PipelineTask(
+            pipeline,
+            params=PipelineParams(
+                allow_interruptions=True,
+                enable_metrics=True,
+                enable_usage_metrics=True,
+            ),
+            observers=[RTVIObserver(rtvi)],
+        )
+
+        @rtvi.event_handler("on_client_ready")
+        async def on_client_ready(rtvi):
+            log.debug("Client ready event received")
+            await rtvi.set_bot_ready()
+
+        @transport.event_handler("on_recording_started")
+        async def on_recording_started(transport, status):
+            log.debug("Recording started: {}", status)
+            await transport.on_recording_started(status)
+            await rtvi.set_bot_ready()
+
+        @transport.event_handler("on_first_participant_joined")
+        async def on_first_participant_joined(transport, participant):
+            log.info("First participant joined: {}", participant["id"])
+            # Get the participant ID of the user
+            video_participant_id = participant["id"]
+            # Capture the participant's video
+            await transport.capture_participant_video(video_participant_id, framerate=0)
+            # Set the video participant ID in the context
+            context.set_video_participant_id(video_participant_id)
+            # Capture the participant's transcription
+            await transport.capture_participant_transcription(participant["id"])
+            # Kick off the conversation
+            await task.queue_frames([context_aggregator.user().get_context_frame()])
+
+        @transport.event_handler("on_participant_left")
+        async def on_participant_left(transport, participant, reason):
+            log.info("Participant left: {}", participant)
+            await task.cancel()
+
+        runner = PipelineRunner()
+
+        await runner.run(task)
+
+
+async def bot(config, room_url: str, token: str, session_id=None, session_logger=None):
+    """
+    Main bot entry point compatible with the FastAPI route handler.
+
+    Args:
+        config: The configuration object from the request body
+        room_url: The Daily room URL
+        token: The Daily room token
+        session_id: The session ID for logging
+        session_logger: The session-specific logger
+    """
+    log = session_logger or logger
+    log.info(f"Bot process initialized {room_url} {token}")
+
+    try:
+        await main(room_url, token, session_logger)
+        log.info("Bot process completed")
+    except Exception as e:
+        log.exception(f"Error in bot process: {str(e)}")
+        raise
+
+
+###########################
+# for local test run only #
+###########################
+LOCAL_RUN = os.getenv("LOCAL_RUN")
+if LOCAL_RUN:
+    import asyncio
+    from local_runner import configure
+    import webbrowser
+
+
+async def local_main():
+    async with aiohttp.ClientSession() as session:
+        (room_url, token) = await configure(session)
+        logger.warning(f"_")
+        logger.warning(f"_")
+        logger.warning(f"Talk to your voice agent here: {room_url}")
+        logger.warning(f"_")
+        logger.warning(f"_")
+        webbrowser.open(room_url)
+        await main(room_url, token)
+
+
+if LOCAL_RUN and __name__ == "__main__":
+    asyncio.run(local_main())
