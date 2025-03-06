@@ -64,22 +64,33 @@ task = PipelineTask(
 
 To connect this agent to Twilio:
 
-1. Purchase a number, if you haven't already
-2. TODO: Add step to retrieve IDs from twilio endpoint
-3. Create a TwiML Bin using the IDs from the previous step:
+1. [Purchase a number from Twilio](https://help.twilio.com/articles/223135247-How-to-Search-for-and-Buy-a-Twilio-Phone-Number-from-Console), if you haven't already
+
+2. Collect your Pipecat Cloud organization name:
+
+```bash
+pcc organizations list
+```
+
+You'll use this information in the next step.
+
+3. Create a [TwiML Bin](https://help.twilio.com/articles/360043489573-Getting-started-with-TwiML-Bins):
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <Stream url="wss://api.pipecat.daily.co/ws/twilio">
-      <Parameter name="_pipecatCloudOrganizationId" value=""/>
-      <Parameter name="_pipecatCloudServiceId" value=""/>
-      <Parameter name="_pipecatCloudServiceHost" value=""/>
+      <Parameter name="_pipecatCloudServiceHost" value="AGENT_NAME.ORGANIZATION_NAME"/>
     </Stream>
   </Connect>
 </Response>
 ```
+
+where:
+
+- AGENT_NAME is your agent's name (the name you used when deploying)
+- ORGANIZATION_NAME is the value returned in the previous step
 
 4. Assign the TwiML Bin to your phone number:
 
