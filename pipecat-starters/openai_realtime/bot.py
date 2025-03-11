@@ -28,6 +28,7 @@ from pipecat.services.openai_realtime_beta import (
     TurnDetection,
 )
 from pipecat.transports.services.daily import DailyParams, DailyTransport
+from pipecatcloud.agent import DailySessionArguments
 
 load_dotenv(override=True)
 
@@ -128,7 +129,7 @@ async def main(room_url: str, token: str, session_logger=None):
     await runner.run(task)
 
 
-async def bot(config, room_url: str, token: str, session_id=None, session_logger=None):
+async def bot(args: DailySessionArguments):
     """Main bot entry point compatible with the FastAPI route handler.
 
     Args:
@@ -138,11 +139,11 @@ async def bot(config, room_url: str, token: str, session_id=None, session_logger
         session_id: The session ID for logging
         session_logger: The session-specific logger
     """
-    log = session_logger or logger
-    log.info(f"Bot process initialized {room_url} {token}")
+    log = args.session_logger or logger
+    log.info(f"Bot process initialized {args.room_url} {args.token}")
 
     try:
-        await main(room_url, token, session_logger)
+        await main(args.room_url, args.token, args.session_logger)
         log.info("Bot process completed")
     except Exception as e:
         log.exception(f"Error in bot process: {str(e)}")

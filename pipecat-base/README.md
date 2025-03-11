@@ -29,14 +29,14 @@ When using this base image, your project must:
 1. Include a `bot.py` file with an async `bot()` function that follows this signature:
 
    ```python
-   async def bot(config, room_url: str, token: str, session_id=None, session_logger=None):
+   async def bot(args: DailySessionArguments):
        """Main bot entry point"""
        # Your agent implementation here
    ```
 
 2. For WebSocket-based agents (like Twilio), implement an alternate signature:
    ```python
-   async def bot(ws: WebSocket, session_logger=None):
+   async def bot(args: WebSocketSessionArguments):
        """WebSocket bot entry point"""
        # Your WebSocket agent implementation here
    ```

@@ -1,2 +1,3 @@
+pipecatcloud
 pipecat-ai[google,daily,silero]
 python-dotenv
