@@ -18,6 +18,7 @@ from pipecat.services.anthropic import AnthropicLLMContext, AnthropicLLMService
 from pipecat.services.cartesia import CartesiaTTSService
 from pipecat.services.deepgram import DeepgramSTTService
 from pipecat.transports.services.daily import DailyParams, DailyTransport
+from pipecatcloud.agent import DailySessionArguments
 
 load_dotenv(override=True)
 
@@ -77,10 +78,8 @@ class AnthropicContextWithVisionTool(AnthropicLLMContext):
         )
 
 
-async def main(room_url: str, token: str, session_logger=None):
-    # Use the provided session logger if available, otherwise use the default logger
-    log = session_logger or logger
-    log.debug("Starting bot in room: {}", room_url)
+async def main(room_url: str, token: str):
+    logger.debug("Starting bot in room: {}", room_url)
 
     transport = DailyTransport(
         room_url,
@@ -180,18 +179,18 @@ async def main(room_url: str, token: str, session_logger=None):
 
     @rtvi.event_handler("on_client_ready")
     async def on_client_ready(rtvi):
-        log.debug("Client ready event received")
+        logger.debug("Client ready event received")
         await rtvi.set_bot_ready()
 
     @transport.event_handler("on_recording_started")
     async def on_recording_started(transport, status):
-        log.debug("Recording started: {}", status)
+        logger.debug("Recording started: {}", status)
         await transport.on_recording_started(status)
         await rtvi.set_bot_ready()
 
     @transport.event_handler("on_first_participant_joined")
     async def on_first_participant_joined(transport, participant):
-        log.info("First participant joined: {}", participant["id"])
+        logger.info("First participant joined: {}", participant["id"])
         # Get the participant ID of the user
         video_participant_id = participant["id"]
         # Capture the participant's video
@@ -205,7 +204,7 @@ async def main(room_url: str, token: str, session_logger=None):
 
     @transport.event_handler("on_participant_left")
     async def on_participant_left(transport, participant, reason):
-        log.info("Participant left: {}", participant)
+        logger.info("Participant left: {}", participant)
         await task.cancel()
 
     runner = PipelineRunner()
@@ -213,7 +212,7 @@ async def main(room_url: str, token: str, session_logger=None):
     await runner.run(task)
 
 
-async def bot(config, room_url: str, token: str, session_id=None, session_logger=None):
+async def bot(args: DailySessionArguments):
     """Main bot entry point compatible with the FastAPI route handler.
 
     Args:
@@ -223,12 +222,11 @@ async def bot(config, room_url: str, token: str, session_id=None, session_logger
         session_id: The session ID for logging
         session_logger: The session-specific logger
     """
-    log = session_logger or logger
-    log.info(f"Bot process initialized {room_url} {token}")
+    logger.info(f"Bot process initialized {args.room_url} {args.token}")
 
     try:
-        await main(room_url, token, session_logger)
-        log.info("Bot process completed")
+        await main(args.room_url, args.token)
+        logger.info("Bot process completed")
     except Exception as e:
-        log.exception(f"Error in bot process: {str(e)}")
+        logger.exception(f"Error in bot process: {str(e)}")
         raise

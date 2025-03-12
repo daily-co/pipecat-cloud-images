@@ -1,2 +1,3 @@
+pipecatcloud
 pipecat-ai[openai,anthropic,daily,deepgram,cartesia,silero]
 python-dotenv

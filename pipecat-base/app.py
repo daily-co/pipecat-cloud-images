@@ -6,11 +6,17 @@ from multiprocessing import Process
 from os import environ
 from typing import Annotated
 
+from bot import bot
 from fastapi import FastAPI, Header, WebSocket
 from fastapi.websockets import WebSocketState
 from loguru import logger
+from pipecatcloud.agent import (
+    DailySessionArguments,
+    PipecatSessionArguments,
+    SessionArguments,
+    WebSocketSessionArguments,
+)
 
-from bot import bot
 from waiting_server import Config, WaitingServer
 
 app = FastAPI()
@@ -30,6 +36,36 @@ logger.add(sys.stderr, format=session_logger_format)
 logger.configure(extra={"session_id": "NONE"})
 
 
+async def run_bot(args: SessionArguments):
+    await bot(args)
+
+
+def daily_bot_process(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
+    # This is a different process so we need to configure the logger again.
+    logger.remove()
+    logger.add(sys.stderr, format=session_logger_format)
+    logger.configure(extra={"session_id": "NONE"})
+
+    logger.bind(session_id=x_daily_session_id)
+
+    args = DailySessionArguments(
+        session_id=x_daily_session_id,
+        room_url=x_daily_room_url,
+        token=x_daily_room_token,
+        body=body,
+    )
+
+    asyncio.run(run_bot(args))
+
+
+def launch_daily_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
+    process = Process(
+        target=daily_bot_process,
+        args=(body, x_daily_room_url, x_daily_room_token, x_daily_session_id),
+    )
+    process.start()
+
+
 @app.post("/bot")
 async def handle_bot_request(
     body: dict,
@@ -37,33 +73,16 @@ async def handle_bot_request(
     x_daily_room_token: Annotated[str | None, Header()] = None,
     x_daily_session_id: Annotated[str | None, Header()] = None,
 ):
-    launch_default_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id)
+    if x_daily_room_url and x_daily_room_token:
+        launch_daily_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id)
+    else:
+        args = PipecatSessionArguments(
+            session_id=x_daily_session_id,
+            body=body,
+        )
+        await run_bot(args)
+
     return {}
-
-
-async def default_bot_main(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
-    session_logger = logger.bind(session_id=x_daily_session_id)
-    response = await bot(
-        body, x_daily_room_url, x_daily_room_token, x_daily_session_id, session_logger
-    )
-    return response
-
-
-def default_bot_process(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
-    # This is a different process so we need to configure the logger again.
-    logger.remove()
-    logger.add(sys.stderr, format=session_logger_format)
-    logger.configure(extra={"session_id": "NONE"})
-
-    asyncio.run(default_bot_main(body, x_daily_room_url, x_daily_room_token, x_daily_session_id))
-
-
-def launch_default_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
-    process = Process(
-        target=default_bot_process,
-        args=(body, x_daily_room_url, x_daily_room_token, x_daily_session_id),
-    )
-    process.start()
 
 
 @app.websocket("/ws")
@@ -71,8 +90,15 @@ async def handle_websocket(
     ws: WebSocket, x_daily_session_id: Annotated[str | None, Header()] = None
 ):
     await ws.accept()
-    session_logger = logger.bind(session_id=x_daily_session_id)
-    await bot(ws, session_logger)
+
+    logger.bind(session_id=x_daily_session_id)
+
+    args = WebSocketSessionArguments(
+        session_id=x_daily_session_id,
+        websocket=ws,
+    )
+    await run_bot(args)
+
     if ws.state == WebSocketState.CONNECTED:
         await ws.close()
 
