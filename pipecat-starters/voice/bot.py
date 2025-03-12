@@ -43,7 +43,7 @@ async def main(room_url: str, token: str, session_logger=None):
                 audio_out_enabled=True,
                 vad_enabled=True,
                 vad_analyzer=SileroVADAnalyzer(),
-                transcription_enabled=True,
+                vad_audio_passthrough=True,
             ),
         )
 

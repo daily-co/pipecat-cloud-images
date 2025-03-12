@@ -53,7 +53,6 @@ async def main(room_url: str, token: str, session_logger=None):
                 vad_enabled=True,
                 vad_analyzer=SileroVADAnalyzer(),
                 vad_audio_passthrough=True,
-                transcription_enabled=False,
             ),
         )
 

@@ -12,7 +12,6 @@ import aiohttp
 from dotenv import load_dotenv
 from loguru import logger
 from openai._types import NotGiven
-
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import (
     CancelFrame,
@@ -361,7 +360,7 @@ async def main(room_url: str, token: str, session_logger=None):
                 audio_out_enabled=True,
                 vad_enabled=True,
                 vad_analyzer=SileroVADAnalyzer(),
-                transcription_enabled=True,
+                vad_audio_passthrough=True,
             ),
         )
 
