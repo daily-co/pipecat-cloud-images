@@ -12,6 +12,7 @@ from fastapi.websockets import WebSocketState
 from loguru import logger
 from pipecatcloud.agent import (
     DailySessionArguments,
+    PipecatSessionArguments,
     SessionArguments,
     WebSocketSessionArguments,
 )
@@ -39,7 +40,7 @@ async def run_bot(args: SessionArguments):
     await bot(args)
 
 
-def default_bot_process(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
+def daily_bot_process(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
     # This is a different process so we need to configure the logger again.
     logger.remove()
     logger.add(sys.stderr, format=session_logger_format)
@@ -57,9 +58,9 @@ def default_bot_process(body, x_daily_room_url, x_daily_room_token, x_daily_sess
     asyncio.run(run_bot(args))
 
 
-def launch_default_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
+def launch_daily_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
     process = Process(
-        target=default_bot_process,
+        target=daily_bot_process,
         args=(body, x_daily_room_url, x_daily_room_token, x_daily_session_id),
     )
     process.start()
@@ -72,7 +73,15 @@ async def handle_bot_request(
     x_daily_room_token: Annotated[str | None, Header()] = None,
     x_daily_session_id: Annotated[str | None, Header()] = None,
 ):
-    launch_default_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id)
+    if x_daily_room_url and x_daily_room_token:
+        launch_daily_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id)
+    else:
+        args = PipecatSessionArguments(
+            session_id=x_daily_session_id,
+            body=body,
+        )
+        await run_bot(args)
+
     return {}
 
 
