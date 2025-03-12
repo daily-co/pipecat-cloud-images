@@ -5,7 +5,6 @@
 #
 
 import os
-import sys
 
 import aiohttp
 from dotenv import load_dotenv
@@ -29,9 +28,6 @@ from pipecat.services.gemini_multimodal_live.gemini import (
 from pipecat.transports.services.daily import DailyParams, DailyTransport
 
 load_dotenv(override=True)
-
-logger.remove(0)
-logger.add(sys.stderr, level="DEBUG")
 
 
 async def main(room_url: str, token: str, session_logger=None):

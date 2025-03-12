@@ -6,7 +6,6 @@
 
 import asyncio
 import os
-import sys
 
 import aiohttp
 from dotenv import load_dotenv
@@ -51,8 +50,6 @@ from pipecat.transports.services.daily import DailyParams, DailyTransport
 
 load_dotenv(override=True)
 
-logger.remove(0)
-logger.add(sys.stderr, level="DEBUG")
 
 classifier_statement = """CRITICAL INSTRUCTION:
 You are a BINARY CLASSIFIER that must ONLY output "YES" or "NO".

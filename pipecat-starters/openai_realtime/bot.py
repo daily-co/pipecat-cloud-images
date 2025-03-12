@@ -5,13 +5,11 @@
 #
 
 import os
-import sys
 
 import aiohttp
 from dotenv import load_dotenv
 from loguru import logger
 from openai._types import NotGiven
-
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -33,9 +31,6 @@ from pipecat.services.openai_realtime_beta import (
 from pipecat.transports.services.daily import DailyParams, DailyTransport
 
 load_dotenv(override=True)
-
-logger.remove(0)
-logger.add(sys.stderr, level="DEBUG")
 
 
 async def main(room_url: str, token: str, session_logger=None):

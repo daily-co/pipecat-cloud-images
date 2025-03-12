@@ -5,7 +5,6 @@
 #
 
 import os
-import sys
 
 import aiohttp
 from dotenv import load_dotenv
@@ -22,9 +21,6 @@ from pipecat.services.deepgram import DeepgramSTTService
 from pipecat.transports.services.daily import DailyParams, DailyTransport
 
 load_dotenv(override=True)
-
-logger.remove(0)
-logger.add(sys.stderr, level="DEBUG")
 
 
 class AnthropicContextWithVisionTool(AnthropicLLMContext):

@@ -6,7 +6,6 @@
 
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 from fastapi import WebSocket
@@ -27,9 +26,6 @@ from pipecat.transports.network.fastapi_websocket import (
 )
 
 load_dotenv(override=True)
-
-logger.remove(0)
-logger.add(sys.stderr, level="DEBUG")
 
 
 async def main(ws: WebSocket, session_logger=None):
