@@ -24,15 +24,13 @@ from pipecat.transports.network.fastapi_websocket import (
     FastAPIWebsocketParams,
     FastAPIWebsocketTransport,
 )
-from pipecatcloud.agent import SessionArguments, WebSocketSessionArguments
+from pipecatcloud.agent import WebSocketSessionArguments
 
 load_dotenv(override=True)
 
 
-async def main(ws: WebSocket, session_logger=None):
-    # Use the provided session logger if available, otherwise use the default logger
-    log = session_logger or logger
-    log.debug("Starting WebSocket bot")
+async def main(ws: WebSocket):
+    logger.debug("Starting WebSocket bot")
 
     start_data = ws.iter_text()
     await start_data.__anext__()
@@ -103,13 +101,13 @@ async def main(ws: WebSocket, session_logger=None):
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
-        log.info(f"Client connected: {client}")
+        logger.info(f"Client connected: {client}")
         # Kick off the conversation
         await task.queue_frames([context_aggregator.user().get_context_frame()])
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
-        log.info(f"Client disconnected: {client}")
+        logger.info(f"Client disconnected: {client}")
         await task.cancel()
 
     runner = PipelineRunner(handle_sigint=False, force_gc=True)
@@ -124,12 +122,11 @@ async def bot(args: WebSocketSessionArguments):
         ws: The WebSocket connection
         session_logger: The session-specific logger
     """
-    log = args.session_logger or logger
-    log.info("WebSocket bot process initialized")
+    logger.info("WebSocket bot process initialized")
 
     try:
-        await main(args.websocket, args.session_logger)
-        log.info("WebSocket bot process completed")
+        await main(args.websocket)
+        logger.info("WebSocket bot process completed")
     except Exception as e:
-        log.exception(f"Error in WebSocket bot process: {str(e)}")
+        logger.exception(f"Error in WebSocket bot process: {str(e)}")
         raise

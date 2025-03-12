@@ -6,6 +6,7 @@ from multiprocessing import Process
 from os import environ
 from typing import Annotated
 
+from bot import bot
 from fastapi import FastAPI, Header, WebSocket
 from fastapi.websockets import WebSocketState
 from loguru import logger
@@ -15,7 +16,6 @@ from pipecatcloud.agent import (
     WebSocketSessionArguments,
 )
 
-from bot import bot
 from waiting_server import Config, WaitingServer
 
 app = FastAPI()
@@ -37,6 +37,7 @@ logger.configure(extra={"session_id": "NONE"})
 
 async def run_bot(args: SessionArguments):
     await bot(args)
+
 
 def default_bot_process(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
     # This is a different process so we need to configure the logger again.
@@ -63,6 +64,7 @@ def launch_default_bot(body, x_daily_room_url, x_daily_room_token, x_daily_sessi
     )
     process.start()
 
+
 @app.post("/bot")
 async def handle_bot_request(
     body: dict,
@@ -72,6 +74,7 @@ async def handle_bot_request(
 ):
     launch_default_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id)
     return {}
+
 
 @app.websocket("/ws")
 async def handle_websocket(
