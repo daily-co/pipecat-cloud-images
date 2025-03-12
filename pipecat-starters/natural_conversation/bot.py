@@ -7,7 +7,6 @@
 import asyncio
 import os
 
-import aiohttp
 from dotenv import load_dotenv
 from loguru import logger
 from openai._types import NotGiven
@@ -348,154 +347,153 @@ async def main(room_url: str, token: str, session_logger=None):
     log = session_logger or logger
     log.debug("starting bot in room: {}", room_url)
 
-    async with aiohttp.ClientSession() as session:
-        transport = DailyTransport(
-            room_url,
-            token,
-            "Voice AI Bot",
-            DailyParams(
-                audio_out_enabled=True,
-                vad_enabled=True,
-                vad_analyzer=SileroVADAnalyzer(),
-                vad_audio_passthrough=True,
+    transport = DailyTransport(
+        room_url,
+        token,
+        "Voice AI Bot",
+        DailyParams(
+            audio_out_enabled=True,
+            vad_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(),
+            vad_audio_passthrough=True,
+        ),
+    )
+
+    # Configure your STT, LLM, and TTS services here
+    # Swap out different processors or properties to customize your bot
+    stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
+    llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4o")
+    statement_llm = AnthropicLLMService(
+        api_key=os.getenv("ANTHROPIC_API_KEY"), model="claude-3-5-sonnet-20240620"
+    )
+    tts = CartesiaTTSService(
+        api_key=os.getenv("CARTESIA_API_KEY"),
+        voice_id="79a125e8-cd45-4c13-8a67-188112f4dd22",
+    )
+
+    # Set up the initial context for the conversation
+    # You can specified initial system and assistant messages here
+    messages = [
+        {
+            "role": "system",
+            "content": """You are Chatbot, a friendly, helpful robot. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way, but keep your responses brief. Start by introducing yourself.""",
+        },
+    ]
+
+    # Define and register tools as required
+    tools = NotGiven()
+
+    # This sets up the LLM context by providing messages and tools
+    context = OpenAILLMContext(messages, tools)
+    context_aggregator = llm.create_context_aggregator(context)
+
+    # We have instructed the LLM to return 'YES' if it thinks the user
+    # completed a sentence. So, if it's 'YES' we will return true in this
+    # predicate which will wake up the notifier.
+    async def wake_check_filter(frame):
+        return frame.text == "YES"
+
+    # This is a notifier that we use to synchronize the two LLMs.
+    notifier = EventNotifier()
+
+    # This turns the LLM context into an inference request to classify the user's speech
+    # as complete or incomplete.
+    statement_judge_context_filter = StatementJudgeContextFilter(notifier=notifier)
+
+    # This sends a UserStoppedSpeakingFrame and triggers the notifier event
+    completeness_check = CompletenessCheck(notifier=notifier)
+
+    # # Notify if the user hasn't said anything.
+    async def user_idle_notifier(frame):
+        await notifier.notify()
+
+    # Sometimes the LLM will fail detecting if a user has completed a
+    # sentence, this will wake up the notifier if that happens.
+    user_idle = UserIdleProcessor(callback=user_idle_notifier, timeout=5.0)
+
+    # We start with the gate open because we send an initial context frame
+    # to start the conversation.
+    bot_output_gate = OutputGate(notifier=notifier, start_open=True)
+
+    async def block_user_stopped_speaking(frame):
+        return not isinstance(frame, UserStoppedSpeakingFrame)
+
+    async def pass_only_llm_trigger_frames(frame):
+        return (
+            isinstance(frame, OpenAILLMContextFrame)
+            or isinstance(frame, LLMMessagesFrame)
+            or isinstance(frame, StartInterruptionFrame)
+            or isinstance(frame, StopInterruptionFrame)
+        )
+
+    # RTVI events for Pipecat client UI
+    rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
+
+    # We use a parallel pipeline to handle the two LLMs in parallel.
+    # Add additional processors to customize the bot's behavior
+    pipeline = Pipeline(
+        [
+            transport.input(),
+            rtvi,
+            stt,
+            context_aggregator.user(),
+            ParallelPipeline(
+                [FunctionFilter(filter=block_user_stopped_speaking)],
+                [
+                    statement_judge_context_filter,
+                    statement_llm,
+                    completeness_check,
+                ],
+                [
+                    FunctionFilter(filter=pass_only_llm_trigger_frames),
+                    llm,
+                    bot_output_gate,
+                ],
             ),
-        )
-
-        # Configure your STT, LLM, and TTS services here
-        # Swap out different processors or properties to customize your bot
-        stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
-        llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4o")
-        statement_llm = AnthropicLLMService(
-            api_key=os.getenv("ANTHROPIC_API_KEY"), model="claude-3-5-sonnet-20240620"
-        )
-        tts = CartesiaTTSService(
-            api_key=os.getenv("CARTESIA_API_KEY"),
-            voice_id="79a125e8-cd45-4c13-8a67-188112f4dd22",
-        )
-
-        # Set up the initial context for the conversation
-        # You can specified initial system and assistant messages here
-        messages = [
-            {
-                "role": "system",
-                "content": """You are Chatbot, a friendly, helpful robot. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way, but keep your responses brief. Start by introducing yourself.""",
-            },
+            tts,
+            user_idle,
+            transport.output(),
+            context_aggregator.assistant(),
         ]
+    )
 
-        # Define and register tools as required
-        tools = NotGiven()
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(
+            allow_interruptions=True,
+            enable_metrics=True,
+            enable_usage_metrics=True,
+        ),
+        observers=[RTVIObserver(rtvi)],
+    )
 
-        # This sets up the LLM context by providing messages and tools
-        context = OpenAILLMContext(messages, tools)
-        context_aggregator = llm.create_context_aggregator(context)
+    @rtvi.event_handler("on_client_ready")
+    async def on_client_ready(rtvi):
+        log.debug("Client ready event received")
+        await rtvi.set_bot_ready()
 
-        # We have instructed the LLM to return 'YES' if it thinks the user
-        # completed a sentence. So, if it's 'YES' we will return true in this
-        # predicate which will wake up the notifier.
-        async def wake_check_filter(frame):
-            return frame.text == "YES"
+    @transport.event_handler("on_recording_started")
+    async def on_recording_started(transport, status):
+        log.debug("Recording started: {}", status)
+        await transport.on_recording_started(status)
+        await rtvi.set_bot_ready()
 
-        # This is a notifier that we use to synchronize the two LLMs.
-        notifier = EventNotifier()
+    @transport.event_handler("on_first_participant_joined")
+    async def on_first_participant_joined(transport, participant):
+        log.info("First participant joined: {}", participant["id"])
+        # Capture the participant's transcription
+        await transport.capture_participant_transcription(participant["id"])
+        # Kick off the conversation
+        await task.queue_frames([context_aggregator.user().get_context_frame()])
 
-        # This turns the LLM context into an inference request to classify the user's speech
-        # as complete or incomplete.
-        statement_judge_context_filter = StatementJudgeContextFilter(notifier=notifier)
+    @transport.event_handler("on_participant_left")
+    async def on_participant_left(transport, participant, reason):
+        log.info("Participant left: {}", participant)
+        await task.cancel()
 
-        # This sends a UserStoppedSpeakingFrame and triggers the notifier event
-        completeness_check = CompletenessCheck(notifier=notifier)
+    runner = PipelineRunner()
 
-        # # Notify if the user hasn't said anything.
-        async def user_idle_notifier(frame):
-            await notifier.notify()
-
-        # Sometimes the LLM will fail detecting if a user has completed a
-        # sentence, this will wake up the notifier if that happens.
-        user_idle = UserIdleProcessor(callback=user_idle_notifier, timeout=5.0)
-
-        # We start with the gate open because we send an initial context frame
-        # to start the conversation.
-        bot_output_gate = OutputGate(notifier=notifier, start_open=True)
-
-        async def block_user_stopped_speaking(frame):
-            return not isinstance(frame, UserStoppedSpeakingFrame)
-
-        async def pass_only_llm_trigger_frames(frame):
-            return (
-                isinstance(frame, OpenAILLMContextFrame)
-                or isinstance(frame, LLMMessagesFrame)
-                or isinstance(frame, StartInterruptionFrame)
-                or isinstance(frame, StopInterruptionFrame)
-            )
-
-        # RTVI events for Pipecat client UI
-        rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
-
-        # We use a parallel pipeline to handle the two LLMs in parallel.
-        # Add additional processors to customize the bot's behavior
-        pipeline = Pipeline(
-            [
-                transport.input(),
-                rtvi,
-                stt,
-                context_aggregator.user(),
-                ParallelPipeline(
-                    [FunctionFilter(filter=block_user_stopped_speaking)],
-                    [
-                        statement_judge_context_filter,
-                        statement_llm,
-                        completeness_check,
-                    ],
-                    [
-                        FunctionFilter(filter=pass_only_llm_trigger_frames),
-                        llm,
-                        bot_output_gate,
-                    ],
-                ),
-                tts,
-                user_idle,
-                transport.output(),
-                context_aggregator.assistant(),
-            ]
-        )
-
-        task = PipelineTask(
-            pipeline,
-            params=PipelineParams(
-                allow_interruptions=True,
-                enable_metrics=True,
-                enable_usage_metrics=True,
-            ),
-            observers=[RTVIObserver(rtvi)],
-        )
-
-        @rtvi.event_handler("on_client_ready")
-        async def on_client_ready(rtvi):
-            log.debug("Client ready event received")
-            await rtvi.set_bot_ready()
-
-        @transport.event_handler("on_recording_started")
-        async def on_recording_started(transport, status):
-            log.debug("Recording started: {}", status)
-            await transport.on_recording_started(status)
-            await rtvi.set_bot_ready()
-
-        @transport.event_handler("on_first_participant_joined")
-        async def on_first_participant_joined(transport, participant):
-            log.info("First participant joined: {}", participant["id"])
-            # Capture the participant's transcription
-            await transport.capture_participant_transcription(participant["id"])
-            # Kick off the conversation
-            await task.queue_frames([context_aggregator.user().get_context_frame()])
-
-        @transport.event_handler("on_participant_left")
-        async def on_participant_left(transport, participant, reason):
-            log.info("Participant left: {}", participant)
-            await task.cancel()
-
-        runner = PipelineRunner()
-
-        await runner.run(task)
+    await runner.run(task)
 
 
 async def bot(config, room_url: str, token: str, session_id=None, session_logger=None):
