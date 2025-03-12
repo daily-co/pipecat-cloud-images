@@ -5,13 +5,10 @@
 #
 
 import os
-import sys
 
-import aiohttp
 from dotenv import load_dotenv
 from loguru import logger
 from openai._types import NotGiven
-
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -34,106 +31,101 @@ from pipecat.transports.services.daily import DailyParams, DailyTransport
 
 load_dotenv(override=True)
 
-logger.remove(0)
-logger.add(sys.stderr, level="DEBUG")
-
 
 async def main(room_url: str, token: str, session_logger=None):
     log = session_logger or logger
     log.debug("starting bot in room: {}", room_url)
 
-    async with aiohttp.ClientSession() as session:
-        transport = DailyTransport(
-            room_url,
-            token,
-            "Voice AI Bot",
-            DailyParams(
-                audio_in_enabled=True,
-                audio_out_enabled=True,
-                vad_enabled=True,
-                vad_analyzer=SileroVADAnalyzer(),
-                vad_audio_passthrough=True,
-                transcription_enabled=False,
-            ),
-        )
+    transport = DailyTransport(
+        room_url,
+        token,
+        "Voice AI Bot",
+        DailyParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            vad_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(),
+            vad_audio_passthrough=True,
+        ),
+    )
 
-        session_properties = SessionProperties(
-            input_audio_transcription=InputAudioTranscription(),
-            # Set openai TurnDetection parameters. Not setting this at all will turn it
-            # on by default
-            turn_detection=TurnDetection(silence_duration_ms=1000),
-            # Or set to False to disable openai turn detection and use transport VAD
-            # turn_detection=False,
-            # tools=tools,
-            instructions="""You are Chatbot, a friendly, helpful robot. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way, but keep your responses brief. Start by introducing yourself.""",
-        )
+    session_properties = SessionProperties(
+        input_audio_transcription=InputAudioTranscription(),
+        # Set openai TurnDetection parameters. Not setting this at all will turn it
+        # on by default
+        turn_detection=TurnDetection(silence_duration_ms=1000),
+        # Or set to False to disable openai turn detection and use transport VAD
+        # turn_detection=False,
+        # tools=tools,
+        instructions="""You are Chatbot, a friendly, helpful robot. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way, but keep your responses brief. Start by introducing yourself.""",
+    )
 
-        llm = OpenAIRealtimeBetaLLMService(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            session_properties=session_properties,
-            start_audio_paused=False,
-        )
+    llm = OpenAIRealtimeBetaLLMService(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        session_properties=session_properties,
+        start_audio_paused=False,
+    )
 
-        # Define and register tools as required
-        tools = NotGiven()
+    # Define and register tools as required
+    tools = NotGiven()
 
-        # This sets up the LLM context by providing messages and tools
-        context = OpenAILLMContext([], tools)
-        context_aggregator = llm.create_context_aggregator(context)
+    # This sets up the LLM context by providing messages and tools
+    context = OpenAILLMContext([], tools)
+    context_aggregator = llm.create_context_aggregator(context)
 
-        # RTVI events for Pipecat client UI
-        rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
+    # RTVI events for Pipecat client UI
+    rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
-        # A core speech-to-speech AI pipeline
-        # Add additional processors to customize the bot's behavior
-        pipeline = Pipeline(
-            [
-                transport.input(),
-                rtvi,
-                context_aggregator.user(),
-                llm,
-                transport.output(),
-                context_aggregator.assistant(),
-            ]
-        )
+    # A core speech-to-speech AI pipeline
+    # Add additional processors to customize the bot's behavior
+    pipeline = Pipeline(
+        [
+            transport.input(),
+            rtvi,
+            context_aggregator.user(),
+            llm,
+            transport.output(),
+            context_aggregator.assistant(),
+        ]
+    )
 
-        task = PipelineTask(
-            pipeline,
-            params=PipelineParams(
-                allow_interruptions=True,
-                enable_metrics=True,
-                enable_usage_metrics=True,
-            ),
-            observers=[RTVIObserver(rtvi)],
-        )
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(
+            allow_interruptions=True,
+            enable_metrics=True,
+            enable_usage_metrics=True,
+        ),
+        observers=[RTVIObserver(rtvi)],
+    )
 
-        @rtvi.event_handler("on_client_ready")
-        async def on_client_ready(rtvi):
-            log.debug("Client ready event received")
-            await rtvi.set_bot_ready()
+    @rtvi.event_handler("on_client_ready")
+    async def on_client_ready(rtvi):
+        log.debug("Client ready event received")
+        await rtvi.set_bot_ready()
 
-        @transport.event_handler("on_recording_started")
-        async def on_recording_started(transport, status):
-            log.debug("Recording started: {}", status)
-            await transport.on_recording_started(status)
-            await rtvi.set_bot_ready()
+    @transport.event_handler("on_recording_started")
+    async def on_recording_started(transport, status):
+        log.debug("Recording started: {}", status)
+        await transport.on_recording_started(status)
+        await rtvi.set_bot_ready()
 
-        @transport.event_handler("on_first_participant_joined")
-        async def on_first_participant_joined(transport, participant):
-            log.info("First participant joined: {}", participant["id"])
-            # Capture the participant's transcription
-            await transport.capture_participant_transcription(participant["id"])
-            # Kick off the conversation
-            await task.queue_frames([context_aggregator.user().get_context_frame()])
+    @transport.event_handler("on_first_participant_joined")
+    async def on_first_participant_joined(transport, participant):
+        log.info("First participant joined: {}", participant["id"])
+        # Capture the participant's transcription
+        await transport.capture_participant_transcription(participant["id"])
+        # Kick off the conversation
+        await task.queue_frames([context_aggregator.user().get_context_frame()])
 
-        @transport.event_handler("on_participant_left")
-        async def on_participant_left(transport, participant, reason):
-            log.info("Participant left: {}", participant)
-            await task.cancel()
+    @transport.event_handler("on_participant_left")
+    async def on_participant_left(transport, participant, reason):
+        log.info("Participant left: {}", participant)
+        await task.cancel()
 
-        runner = PipelineRunner()
+    runner = PipelineRunner()
 
-        await runner.run(task)
+    await runner.run(task)
 
 
 async def bot(config, room_url: str, token: str, session_id=None, session_logger=None):

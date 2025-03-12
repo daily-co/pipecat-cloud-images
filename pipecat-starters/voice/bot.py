@@ -5,13 +5,10 @@
 #
 
 import os
-import sys
 
-import aiohttp
 from dotenv import load_dotenv
 from loguru import logger
 from openai._types import NotGiven
-
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -25,108 +22,104 @@ from pipecat.transports.services.daily import DailyParams, DailyTransport
 
 load_dotenv(override=True)
 
-logger.remove(0)
-logger.add(sys.stderr, level="DEBUG")
-
 
 async def main(room_url: str, token: str, session_logger=None):
     # Use the provided session logger if available, otherwise use the default logger
     log = session_logger or logger
     log.debug("Starting bot in room: {}", room_url)
 
-    async with aiohttp.ClientSession() as session:
-        transport = DailyTransport(
-            room_url,
-            token,
-            "Voice AI Bot",
-            DailyParams(
-                audio_out_enabled=True,
-                vad_enabled=True,
-                vad_analyzer=SileroVADAnalyzer(),
-                transcription_enabled=True,
-            ),
-        )
+    transport = DailyTransport(
+        room_url,
+        token,
+        "Voice AI Bot",
+        DailyParams(
+            audio_out_enabled=True,
+            vad_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(),
+            vad_audio_passthrough=True,
+        ),
+    )
 
-        # Configure your STT, LLM, and TTS services here
-        # Swap out different processors or properties to customize your bot
-        stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
-        llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4o")
-        tts = CartesiaTTSService(
-            api_key=os.getenv("CARTESIA_API_KEY"),
-            voice_id="79a125e8-cd45-4c13-8a67-188112f4dd22",
-        )
+    # Configure your STT, LLM, and TTS services here
+    # Swap out different processors or properties to customize your bot
+    stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
+    llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4o")
+    tts = CartesiaTTSService(
+        api_key=os.getenv("CARTESIA_API_KEY"),
+        voice_id="79a125e8-cd45-4c13-8a67-188112f4dd22",
+    )
 
-        # Set up the initial context for the conversation
-        # You can specified initial system and assistant messages here
-        messages = [
-            {
-                "role": "system",
-                "content": "You are Chatbot, a friendly, helpful robot. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way, but keep your responses brief. Start by introducing yourself.",
-            },
+    # Set up the initial context for the conversation
+    # You can specified initial system and assistant messages here
+    messages = [
+        {
+            "role": "system",
+            "content": "You are Chatbot, a friendly, helpful robot. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way, but keep your responses brief. Start by introducing yourself.",
+        },
+    ]
+
+    # Define and register tools as required
+    tools = NotGiven()
+
+    # This sets up the LLM context by providing messages and tools
+    context = OpenAILLMContext(messages, tools)
+    context_aggregator = llm.create_context_aggregator(context)
+
+    # RTVI events for Pipecat client UI
+    rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
+
+    # A core voice AI pipeline
+    # Add additional processors to customize the bot's behavior
+    pipeline = Pipeline(
+        [
+            transport.input(),
+            rtvi,
+            stt,
+            context_aggregator.user(),
+            llm,
+            tts,
+            transport.output(),
+            context_aggregator.assistant(),
         ]
+    )
 
-        # Define and register tools as required
-        tools = NotGiven()
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(
+            allow_interruptions=True,
+            enable_metrics=True,
+            enable_usage_metrics=True,
+        ),
+        observers=[RTVIObserver(rtvi)],
+    )
 
-        # This sets up the LLM context by providing messages and tools
-        context = OpenAILLMContext(messages, tools)
-        context_aggregator = llm.create_context_aggregator(context)
+    @rtvi.event_handler("on_client_ready")
+    async def on_client_ready(rtvi):
+        log.debug("Client ready event received")
+        await rtvi.set_bot_ready()
 
-        # RTVI events for Pipecat client UI
-        rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
+    @transport.event_handler("on_recording_started")
+    async def on_recording_started(transport, status):
+        log.debug("Recording started: {}", status)
+        await transport.on_recording_started(status)
+        await rtvi.set_bot_ready()
 
-        # A core voice AI pipeline
-        # Add additional processors to customize the bot's behavior
-        pipeline = Pipeline(
-            [
-                transport.input(),
-                rtvi,
-                stt,
-                context_aggregator.user(),
-                llm,
-                tts,
-                transport.output(),
-                context_aggregator.assistant(),
-            ]
-        )
+    @transport.event_handler("on_first_participant_joined")
+    async def on_first_participant_joined(transport, participant):
+        log.info("First participant joined: {}", participant["id"])
+        # Capture the participant's transcription
+        await transport.capture_participant_transcription(participant["id"])
+        # Kick off the conversation
+        await task.queue_frames([context_aggregator.user().get_context_frame()])
 
-        task = PipelineTask(
-            pipeline,
-            params=PipelineParams(
-                allow_interruptions=True,
-                enable_metrics=True,
-                enable_usage_metrics=True,
-            ),
-            observers=[RTVIObserver(rtvi)],
-        )
+    @transport.event_handler("on_participant_left")
+    async def on_participant_left(transport, participant, reason):
+        log.info("Participant left: {}", participant)
+        await task.cancel()
 
-        @rtvi.event_handler("on_client_ready")
-        async def on_client_ready(rtvi):
-            log.debug("Client ready event received")
-            await rtvi.set_bot_ready()
+    runner = PipelineRunner(handle_sigint=False, force_gc=True)
 
-        @transport.event_handler("on_recording_started")
-        async def on_recording_started(transport, status):
-            log.debug("Recording started: {}", status)
-            await transport.on_recording_started(status)
-            await rtvi.set_bot_ready()
-
-        @transport.event_handler("on_first_participant_joined")
-        async def on_first_participant_joined(transport, participant):
-            log.info("First participant joined: {}", participant["id"])
-            # Capture the participant's transcription
-            await transport.capture_participant_transcription(participant["id"])
-            # Kick off the conversation
-            await task.queue_frames([context_aggregator.user().get_context_frame()])
-
-        @transport.event_handler("on_participant_left")
-        async def on_participant_left(transport, participant, reason):
-            log.info("Participant left: {}", participant)
-            await task.cancel()
-
-        runner = PipelineRunner(handle_sigint=False, force_gc=True)
-
-        await runner.run(task)
+    await runner.run(task)
 
 
 async def bot(config, room_url: str, token: str, session_id=None, session_logger=None):
