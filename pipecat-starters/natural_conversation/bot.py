@@ -500,11 +500,10 @@ async def bot(args: DailySessionArguments):
     """Main bot entry point compatible with the FastAPI route handler.
 
     Args:
-        config: The configuration object from the request body
         room_url: The Daily room URL
         token: The Daily room token
+        body: The configuration object from the request body
         session_id: The session ID for logging
-        session_logger: The session-specific logger
     """
     logger.info(f"Bot process initialized {args.room_url} {args.token}")
 
