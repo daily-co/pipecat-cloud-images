@@ -6,7 +6,6 @@ from multiprocessing import Process
 from os import environ
 from typing import Annotated
 
-from bot import bot
 from fastapi import FastAPI, Header, WebSocket
 from fastapi.websockets import WebSocketState
 from loguru import logger
@@ -37,6 +36,10 @@ logger.configure(extra={"session_id": "NONE"})
 
 
 async def run_bot(args: SessionArguments):
+    # We lazy import the bot file since we might be running in a different
+    # process (Daily case).
+    from bot import bot
+
     await bot(args)
 
 
