@@ -67,10 +67,10 @@ async def launch_daily_bot(body, x_daily_room_url, x_daily_room_token, x_daily_s
         args=(body, x_daily_room_url, x_daily_room_token, x_daily_session_id),
     )
     process.start()
+    # Wait for the process to finish. We don't call join() because that will
+    # block the asyncio event loop.
     while process.is_alive():
-        print("waiting")
         await asyncio.sleep(1)
-    process.join()
 
 
 @app.post("/bot")
