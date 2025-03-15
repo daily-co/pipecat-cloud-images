@@ -61,12 +61,16 @@ def daily_bot_process(body, x_daily_room_url, x_daily_room_token, x_daily_sessio
     asyncio.run(run_bot(args))
 
 
-def launch_daily_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
+async def launch_daily_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
     process = Process(
         target=daily_bot_process,
         args=(body, x_daily_room_url, x_daily_room_token, x_daily_session_id),
     )
     process.start()
+    while process.is_alive():
+        print("waiting")
+        await asyncio.sleep(1)
+    process.join()
 
 
 @app.post("/bot")
@@ -77,7 +81,7 @@ async def handle_bot_request(
     x_daily_session_id: Annotated[str | None, Header()] = None,
 ):
     if x_daily_room_url and x_daily_room_token:
-        launch_daily_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id)
+        await launch_daily_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id)
     else:
         args = PipecatSessionArguments(
             session_id=x_daily_session_id,
