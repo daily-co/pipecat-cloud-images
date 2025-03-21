@@ -42,6 +42,10 @@ async def terminate_call(
 async def main(room_url: str, token: str, body: dict):
     logger.debug("Starting bot in room: {}", room_url, body)
 
+    # Add max_attempts configuration
+    max_attempts = 5
+    dialout_attempt_count = 0
+
     # dialin_settings are received when a call is triggered to
     # Daily via pinless_dialin. This can be a phone number on Daily or a
     # sip interconnect from Twilio or Telnyx.
@@ -156,6 +160,15 @@ async def main(room_url: str, token: str, body: dict):
     # this is called when the call state is updated to "joined"
     # and set_bot_ready() when dialout answered is fired
     async def start_dialout(transport, dialout_settings):
+        nonlocal dialout_attempt_count
+        dialout_attempt_count += 1
+
+        if dialout_attempt_count > max_attempts:
+            logger.error(f"Max dialout attempts ({max_attempts}) reached, giving up")
+            return
+
+        logger.debug(f"Dialout attempt {dialout_attempt_count}/{max_attempts}")
+
         for dialout_setting in dialout_settings:
             # Change from attribute access to dictionary access
             if "phoneNumber" in dialout_setting:
@@ -187,6 +200,22 @@ async def main(room_url: str, token: str, body: dict):
         logger.debug(f"Dial-out answered: {data} and set_bot_ready")
         await rtvi.set_bot_ready()
 
+    @transport.event_handler("on_dialout_stopped")
+    async def on_dialout_stopped(transport, data):
+        logger.debug(f"Dial-out stopped: {data}")
+
+    @transport.event_handler("on_dialout_error")
+    async def on_dialout_error(transport, data):
+        logger.error(f"Dial-out error: {data}")
+        await start_dialout(transport, dialout_settings)
+
+    @transport.event_handler("on_dialout_warning")
+    async def on_dialout_warning(transport, data):
+        logger.warning(f"Dial-out warning: {data}")
+
+    # Configuring handlers for dialing in
+    # dialin ready fires when the room has REGISTERED
+    # the sip addresses with the SIP network
     @transport.event_handler("on_dialin_ready")
     async def on_dialin_ready(transport, data):
         # For Twilio, Telnyx, etc. You need to update the state of the call
@@ -197,6 +226,20 @@ async def main(room_url: str, token: str, body: dict):
     async def on_dialin_connected(transport, data):
         logger.debug(f"Dial-in connected: {data} and set_bot_ready")
         await rtvi.set_bot_ready()
+
+    @transport.event_handler("on_dialin_stopped")
+    async def on_dialin_stopped(transport, data):
+        logger.debug(f"Dial-in stopped: {data}")
+
+    @transport.event_handler("on_dialin_error")
+    async def on_dialin_error(transport, data):
+        logger.error(f"Dial-in error: {data}")
+        # the bot should leave the call if there is an error
+        await task.cancel()
+
+    @transport.event_handler("on_dialin_warning")
+    async def on_dialin_warning(transport, data):
+        logger.warning(f"Dial-in warning: {data}")
 
     # set bot ready when the rtvi client sends ready.
     # this is not sent for telephony endpoints
