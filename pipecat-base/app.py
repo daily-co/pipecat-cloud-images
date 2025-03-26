@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 
-import asyncio
 import sys
-from multiprocessing import Process
 from os import environ
 from typing import Annotated
 
@@ -16,6 +14,7 @@ from pipecatcloud.agent import (
     WebSocketSessionArguments,
 )
 
+from bot import bot
 from waiting_server import Config, WaitingServer
 
 app = FastAPI()
@@ -36,41 +35,8 @@ logger.configure(extra={"session_id": "NONE"})
 
 
 async def run_bot(args: SessionArguments):
-    # We lazy import the bot file since we might be running in a different
-    # process (Daily case).
-    from bot import bot
-
+    logger.bind(session_id=args.session_id)
     await bot(args)
-
-
-def daily_bot_process(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
-    # This is a different process so we need to configure the logger again.
-    logger.remove()
-    logger.add(sys.stderr, format=session_logger_format)
-    logger.configure(extra={"session_id": "NONE"})
-
-    logger.bind(session_id=x_daily_session_id)
-
-    args = DailySessionArguments(
-        session_id=x_daily_session_id,
-        room_url=x_daily_room_url,
-        token=x_daily_room_token,
-        body=body,
-    )
-
-    asyncio.run(run_bot(args))
-
-
-async def launch_daily_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id):
-    process = Process(
-        target=daily_bot_process,
-        args=(body, x_daily_room_url, x_daily_room_token, x_daily_session_id),
-    )
-    process.start()
-    # Wait for the process to finish. We don't call join() because that will
-    # block the asyncio event loop.
-    while process.is_alive():
-        await asyncio.sleep(1)
 
 
 @app.post("/bot")
@@ -81,13 +47,19 @@ async def handle_bot_request(
     x_daily_session_id: Annotated[str | None, Header()] = None,
 ):
     if x_daily_room_url and x_daily_room_token:
-        await launch_daily_bot(body, x_daily_room_url, x_daily_room_token, x_daily_session_id)
+        args = DailySessionArguments(
+            session_id=x_daily_session_id,
+            room_url=x_daily_room_url,
+            token=x_daily_room_token,
+            body=body,
+        )
     else:
         args = PipecatSessionArguments(
             session_id=x_daily_session_id,
             body=body,
         )
-        await run_bot(args)
+
+    await run_bot(args)
 
     return {}
 
@@ -98,12 +70,11 @@ async def handle_websocket(
 ):
     await ws.accept()
 
-    logger.bind(session_id=x_daily_session_id)
-
     args = WebSocketSessionArguments(
         session_id=x_daily_session_id,
         websocket=ws,
     )
+
     await run_bot(args)
 
     if ws.state == WebSocketState.CONNECTED:
