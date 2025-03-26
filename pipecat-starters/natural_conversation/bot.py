@@ -368,7 +368,7 @@ async def main(room_url: str, token: str):
     )
     tts = CartesiaTTSService(
         api_key=os.getenv("CARTESIA_API_KEY"),
-        voice_id="71a7ad14-091c-4e8e-a314-022ece01c121",  # British Reading Lady
+        voice_id="79a125e8-cd45-4c13-8a67-188112f4dd22",
     )
 
     # Set up the initial context for the conversation
