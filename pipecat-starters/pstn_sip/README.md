@@ -24,7 +24,8 @@ You'll need the following API keys to get started:
 - `DEEPGRAM_API_KEY`
 - `CARTESIA_API_KEY`
 
-> Your Pipecat Cloud account has a Daily account associated with it. That Daily API key is automatically used when connecting with a DailyTransport.
+> Your Pipecat Cloud account has a Daily account associated with it. That Daily
+> API key is automatically used when connecting with a DailyTransport.
 
 ### Phone number setup
 
@@ -148,20 +149,25 @@ To make outbound calls, you need to provide the target phone number(s) in the `d
 ```bash
 curl --request POST \
 --url https://api.pipecat.daily.co/v1/public/{service}/start \
---header 'Authorization: Bearer $TOKEN$' \
+--header 'Authorization: Bearer $TOKEN' \
 --header 'Content-Type: application/json' \
 --data-raw '{
     'createDailyRoom': true,
     'dailyRoomProperties': {
         'enable_dialout': false,
-        'sip': {'display_name': 'dialin', 'sip_mode': 'dial-in', 'num_endpoints': 1},
+        'sip': {'display_name': 'dial-in', 'sip_mode': 'dial-in', 'num_endpoints': 1},
         'exp': 1742353929
     },
     'body': {
         'dialout_settings': [{'phoneNumber': '+1TARGET', 'callerId': 'UUID_OF_PURCHASED_NUM'}]
     }
-}
+}'
 ```
+
+> TARGET: formatted as +15551234567, where +1 is the country code
+>
+> UUID_OF_PURCHASED_NUM: obtained through the [/purchased-phone-numbers endpoint](https://docs.daily.co/reference/rest-api/phone-numbers/purchased-phone-numbers)
+> or in your Pipecat Cloud dashboard (`Settings` > `Telephony`)
 
 The call flow looks like this:
 
