@@ -18,7 +18,6 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.processors.frame_processor import FrameDirection
-from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
 from pipecat.services.ai_services import LLMService
 from pipecat.services.cartesia import CartesiaTTSService
 from pipecat.services.deepgram import DeepgramSTTService
@@ -34,7 +33,7 @@ load_dotenv(override=True)
 async def terminate_call(
     function_name, tool_call_id, args, llm: LLMService, context, result_callback
 ):
-    """Function the bot can call to terminate the call upon completion of a voicemail message."""
+    """Function the bot can call to terminate the call; e.g. upon completion of a voicemail message."""
     await llm.queue_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
     await result_callback("Goodbye")
 
@@ -42,10 +41,7 @@ async def terminate_call(
 async def main(room_url: str, token: str, body: dict):
     logger.debug("Starting bot in room: {}", room_url, body)
 
-    # Add max_attempts configuration
-    max_attempts = 5
-    dialout_attempt_count = 0
-
+    # Dial-in configuration:
     # dialin_settings are received when a call is triggered to
     # Daily via pinless_dialin. This can be a phone number on Daily or a
     # sip interconnect from Twilio or Telnyx.
@@ -66,20 +62,18 @@ async def main(room_url: str, token: str, body: dict):
             f"Dialin settings: To: {dialled_phonenum}, From: {caller_phonenum}, dialin_settings: {dialin_settings}"
         )
 
-    voicemail_detection = bool(body.get("voicemail_detection"))
-    if voicemail_detection:
-        logger.debug("Voicemail detection enabled")
-
+    # Dial-out configuration
     dialout_settings = None
     dialout_settings = body.get("dialout_settings")
     logger.debug(f"Dialout settings: {dialout_settings}")
+    max_attempts = 5
+    dialout_attempt_count = 0
 
     transport = DailyTransport(
         room_url,
         token,
         "Voice AI Bot",
         DailyParams(
-            api_key=os.getenv("DAILY_API_KEY"),  # needed for dial-in
             dialin_settings=dialin_settings,
             audio_out_enabled=True,
             vad_enabled=True,
@@ -106,7 +100,7 @@ async def main(room_url: str, token: str, body: dict):
             "content": """You are Chatbot, a friendly, helpful robot. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way, but keep your responses brief. Start by introducing yourself.
 
             - If the user no longer needs assistance, say: "Okay, thank you! Have a great day!"
-            -Then call `terminate_call` immediately.""",
+            - Then call `terminate_call` immediately.""",
         },
     ]
 
@@ -128,15 +122,11 @@ async def main(room_url: str, token: str, body: dict):
     context = OpenAILLMContext(messages, tools)
     context_aggregator = llm.create_context_aggregator(context)
 
-    # RTVI events for Pipecat client UI
-    rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
-
     # A core voice AI pipeline
     # Add additional processors to customize the bot's behavior
     pipeline = Pipeline(
         [
             transport.input(),
-            rtvi,
             stt,
             context_aggregator.user(),
             llm,
@@ -150,13 +140,14 @@ async def main(room_url: str, token: str, body: dict):
         pipeline,
         params=PipelineParams(
             allow_interruptions=True,
+            audio_in_sample_rate=8000,
+            audio_out_sample_rate=8000,
             enable_metrics=True,
             enable_usage_metrics=True,
         ),
-        observers=[RTVIObserver(rtvi)],
     )
 
-    # helper function to start dialout
+    # Helper function to start dialout
     # this is called when the call state is updated to "joined"
     # and set_bot_ready() when dialout answered is fired
     async def start_dialout(transport, dialout_settings):
@@ -198,7 +189,6 @@ async def main(room_url: str, token: str, body: dict):
     @transport.event_handler("on_dialout_answered")
     async def on_dialout_answered(transport, data):
         logger.debug(f"Dial-out answered: {data} and set_bot_ready")
-        await rtvi.set_bot_ready()
 
     @transport.event_handler("on_dialout_stopped")
     async def on_dialout_stopped(transport, data):
@@ -225,7 +215,6 @@ async def main(room_url: str, token: str, body: dict):
     @transport.event_handler("on_dialin_connected")
     async def on_dialin_connected(transport, data):
         logger.debug(f"Dial-in connected: {data} and set_bot_ready")
-        await rtvi.set_bot_ready()
 
     @transport.event_handler("on_dialin_stopped")
     async def on_dialin_stopped(transport, data):
@@ -240,21 +229,6 @@ async def main(room_url: str, token: str, body: dict):
     @transport.event_handler("on_dialin_warning")
     async def on_dialin_warning(transport, data):
         logger.warning(f"Dial-in warning: {data}")
-
-    # set bot ready when the rtvi client sends ready.
-    # this is not sent for telephony endpoints
-    @rtvi.event_handler("on_client_ready")
-    async def on_client_ready(rtvi):
-        logger.debug("Client ready sent by remote, set_bot_ready")
-        await rtvi.set_bot_ready()
-
-    # client ready when recording is ready.
-    # For telephony endpoints, reconsider this
-    @transport.event_handler("on_recording_started")
-    async def on_recording_started(transport, status):
-        logger.debugf(f"Recording started: {status} and setting set_bot_ready")
-        await transport.on_recording_started(status)
-        await rtvi.set_bot_ready()
 
     @transport.event_handler("on_call_state_updated")
     async def on_call_state_updated(transport, state):
