@@ -38,8 +38,161 @@ async def terminate_call(
     await result_callback("Goodbye")
 
 
+class DialInHandler:
+    """Handles all dial-in related functionality and event handling.
+
+    This class encapsulates the logic for incoming calls and handling
+    all dial-in related events from the Daily platform.
+    """
+
+    def __init__(self, transport, task, context_aggregator):
+        """Initialize the DialInHandler.
+
+        Args:
+            transport: The Daily transport instance
+            task: The PipelineTask instance
+            context_aggregator: The context aggregator for the LLM
+        """
+        self.transport = transport
+        self.task = task
+        self.context_aggregator = context_aggregator
+        self._register_handlers()
+
+    def _register_handlers(self):
+        """Register all event handlers related to dial-in functionality."""
+
+        @self.transport.event_handler("on_dialin_ready")
+        async def on_dialin_ready(transport, data):
+            """Handler for when the dial-in is ready (SIP addresses registered with the SIP network)."""
+            # For Twilio, Telnyx, etc. You need to update the state of the call
+            # and forward it to the sip_uri.
+            logger.debug(f"Dial-in ready: {data}")
+
+        @self.transport.event_handler("on_dialin_connected")
+        async def on_dialin_connected(transport, data):
+            """Handler for when a dial-in call is connected."""
+            logger.debug(f"Dial-in connected: {data} and set_bot_ready")
+
+        @self.transport.event_handler("on_dialin_stopped")
+        async def on_dialin_stopped(transport, data):
+            """Handler for when a dial-in call is stopped."""
+            logger.debug(f"Dial-in stopped: {data}")
+
+        @self.transport.event_handler("on_dialin_error")
+        async def on_dialin_error(transport, data):
+            """Handler for dial-in errors."""
+            logger.error(f"Dial-in error: {data}")
+            # The bot should leave the call if there is an error
+            await self.task.cancel()
+
+        @self.transport.event_handler("on_dialin_warning")
+        async def on_dialin_warning(transport, data):
+            """Handler for dial-in warnings."""
+            logger.warning(f"Dial-in warning: {data}")
+
+        @self.transport.event_handler("on_first_participant_joined")
+        async def on_first_participant_joined(transport, participant):
+            """Handler for when the first participant joins the call."""
+            logger.info("First participant joined: {}", participant["id"])
+            # Capture the participant's transcription
+            await transport.capture_participant_transcription(participant["id"])
+
+            # For the dial-in case, we want the bot to greet the user.
+            # We can prompt the bot to speak by putting the context into the pipeline.
+            await self.task.queue_frames([self.context_aggregator.user().get_context_frame()])
+
+
+class DialOutHandler:
+    """Handles all dial-out related functionality including retries and event handling.
+
+    This class encapsulates the logic for making outbound calls, managing retry
+    attempts, and handling all dial-out related events from the Daily platform.
+    """
+
+    def __init__(self, transport, task, dialout_settings, max_attempts=5):
+        """Initialize the DialOutHandler.
+
+        Args:
+            transport: The Daily transport instance
+            task: The PipelineTask instance
+            dialout_settings: Configuration for the outbound call
+            max_attempts: Maximum number of dial-out attempts
+        """
+        self.transport = transport
+        self.task = task
+        self.dialout_settings = dialout_settings
+        self.max_attempts = max_attempts
+        self.dialout_attempt_count = 0
+        self._register_handlers()
+        logger.info(f"Initialized DialOutHandler with settings: {dialout_settings}")
+
+    async def start_dialout(self):
+        """Initiates an outbound call using the configured dial-out settings.
+
+        This method will attempt to make an outbound call and will track the
+        number of attempts made, giving up after reaching the maximum number
+        of attempts configured.
+        """
+        self.dialout_attempt_count += 1
+
+        if self.dialout_attempt_count > self.max_attempts:
+            logger.error(f"Max dialout attempts ({self.max_attempts}) reached, giving up")
+            return
+
+        logger.debug(f"Dialout attempt {self.dialout_attempt_count}/{self.max_attempts}")
+
+        for dialout_setting in self.dialout_settings:
+            if "phoneNumber" in dialout_setting:
+                logger.info(f"Dialing number: {dialout_setting['phoneNumber']}")
+                if "callerId" in dialout_setting:
+                    logger.info(f"with callerId: {dialout_setting['callerId']}")
+                    await self.transport.start_dialout(
+                        {
+                            "phoneNumber": dialout_setting["phoneNumber"],
+                            "callerId": dialout_setting["callerId"],
+                        }
+                    )
+                else:
+                    logger.info("with no callerId")
+                    await self.transport.start_dialout(
+                        {"phoneNumber": dialout_setting["phoneNumber"]}
+                    )
+            elif "sipUri" in dialout_setting:
+                logger.info(f"Dialing sipUri: {dialout_setting['sipUri']}")
+                await self.transport.start_dialout({"sipUri": dialout_setting["sipUri"]})
+
+    def _register_handlers(self):
+        """Register all event handlers related to dial-out functionality."""
+
+        @self.transport.event_handler("on_dialout_connected")
+        async def on_dialout_connected(transport, data):
+            """Handler for when a dial-out call is connected (starts ringing)."""
+            logger.debug(f"Dial-out connected: {data}")
+
+        @self.transport.event_handler("on_dialout_answered")
+        async def on_dialout_answered(transport, data):
+            """Handler for when a dial-out call is answered (off hook)."""
+            logger.debug(f"Dial-out answered: {data} and set_bot_ready")
+
+        @self.transport.event_handler("on_dialout_stopped")
+        async def on_dialout_stopped(transport, data):
+            """Handler for when a dial-out call is stopped."""
+            logger.debug(f"Dial-out stopped: {data}")
+
+        @self.transport.event_handler("on_dialout_error")
+        async def on_dialout_error(transport, data):
+            """Handler for dial-out errors. Will retry the call up to max_attempts."""
+            logger.error(f"Dial-out error: {data}")
+            await self.start_dialout()
+
+        @self.transport.event_handler("on_dialout_warning")
+        async def on_dialout_warning(transport, data):
+            """Handler for dial-out warnings."""
+            logger.warning(f"Dial-out warning: {data}")
+
+
 async def main(room_url: str, token: str, body: dict):
-    logger.debug("Starting bot in room: {}", room_url, body)
+    logger.debug("Starting bot in room: {}", room_url)
 
     # Dial-in configuration:
     # dialin_settings are received when a call is triggered to
@@ -50,8 +203,8 @@ async def main(room_url: str, token: str, body: dict):
     caller_phonenum = None
     if raw_dialin_settings := body.get("dialin_settings"):
         # these fields can capitalize the first letter
-        dialled_phonenum = (raw_dialin_settings.get("To") or raw_dialin_settings.get("to"),)
-        caller_phonenum = (raw_dialin_settings.get("From") or raw_dialin_settings.get("from"),)
+        dialled_phonenum = raw_dialin_settings.get("To") or raw_dialin_settings.get("to")
+        caller_phonenum = raw_dialin_settings.get("From") or raw_dialin_settings.get("from")
         dialin_settings = {
             # these fields can be received as snake_case or camelCase.
             "call_id": raw_dialin_settings.get("callId") or raw_dialin_settings.get("call_id"),
@@ -63,17 +216,15 @@ async def main(room_url: str, token: str, body: dict):
         )
 
     # Dial-out configuration
-    dialout_settings = None
     dialout_settings = body.get("dialout_settings")
     logger.debug(f"Dialout settings: {dialout_settings}")
-    max_attempts = 5
-    dialout_attempt_count = 0
 
     transport = DailyTransport(
         room_url,
         token,
         "Voice AI Bot",
         DailyParams(
+            api_key=os.getenv("DAILY_API_KEY"),  # needed for dial-in
             dialin_settings=dialin_settings,
             audio_out_enabled=True,
             vad_enabled=True,
@@ -88,7 +239,7 @@ async def main(room_url: str, token: str, body: dict):
     llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4o")
     tts = CartesiaTTSService(
         api_key=os.getenv("CARTESIA_API_KEY"),
-        voice_id="79a125e8-cd45-4c13-8a67-188112f4dd22",
+        voice_id="71a7ad14-091c-4e8e-a314-022ece01c121",
     )
 
     # Set up the initial context for the conversation
@@ -147,108 +298,26 @@ async def main(room_url: str, token: str, body: dict):
         ),
     )
 
-    # Helper function to start dialout
-    # this is called when the call state is updated to "joined"
-    # and set_bot_ready() when dialout answered is fired
-    async def start_dialout(transport, dialout_settings):
-        nonlocal dialout_attempt_count
-        dialout_attempt_count += 1
+    # Initialize handlers dict to keep references
+    handlers = {}
 
-        if dialout_attempt_count > max_attempts:
-            logger.error(f"Max dialout attempts ({max_attempts}) reached, giving up")
-            return
+    # Initialize appropriate handlers based on the call type
+    if dialin_settings:
+        handlers["dialin"] = DialInHandler(transport, task, context_aggregator)
 
-        logger.debug(f"Dialout attempt {dialout_attempt_count}/{max_attempts}")
+    if dialout_settings:
+        handlers["dialout"] = DialOutHandler(transport, task, dialout_settings)
 
-        for dialout_setting in dialout_settings:
-            # Change from attribute access to dictionary access
-            if "phoneNumber" in dialout_setting:
-                logger.info(f"Dialing number: {dialout_setting['phoneNumber']}")
-                if "callerId" in dialout_setting:
-                    logger.info(f"with callerId: {dialout_setting['callerId']}")
-                    await transport.start_dialout(
-                        {
-                            "phoneNumber": dialout_setting["phoneNumber"],
-                            "callerId": dialout_setting["callerId"],
-                        }
-                    )
-                else:
-                    logger.info("with no callerId")
-                    await transport.start_dialout({"phoneNumber": dialout_setting["phoneNumber"]})
-            elif "sipUri" in dialout_setting:
-                logger.info(f"Dialing sipUri: {dialout_setting['sipUri']}")
-                await transport.start_dialout({"sipUri": dialout_setting["sipUri"]})
-
-    # Configure handlers for dialing out
-    # dialout connected fires when the call starts ringing
-    @transport.event_handler("on_dialout_connected")
-    async def on_dialout_connected(transport, data):
-        logger.debug(f"Dial-out connected: {data}")
-
-    # dialout answered fires when the ringing call is off hook
-    @transport.event_handler("on_dialout_answered")
-    async def on_dialout_answered(transport, data):
-        logger.debug(f"Dial-out answered: {data} and set_bot_ready")
-
-    @transport.event_handler("on_dialout_stopped")
-    async def on_dialout_stopped(transport, data):
-        logger.debug(f"Dial-out stopped: {data}")
-
-    @transport.event_handler("on_dialout_error")
-    async def on_dialout_error(transport, data):
-        logger.error(f"Dial-out error: {data}")
-        await start_dialout(transport, dialout_settings)
-
-    @transport.event_handler("on_dialout_warning")
-    async def on_dialout_warning(transport, data):
-        logger.warning(f"Dial-out warning: {data}")
-
-    # Configuring handlers for dialing in
-    # dialin ready fires when the room has REGISTERED
-    # the sip addresses with the SIP network
-    @transport.event_handler("on_dialin_ready")
-    async def on_dialin_ready(transport, data):
-        # For Twilio, Telnyx, etc. You need to update the state of the call
-        # and forward it to the sip_uri..
-        logger.debug(f"Dial-in ready: {data}")
-
-    @transport.event_handler("on_dialin_connected")
-    async def on_dialin_connected(transport, data):
-        logger.debug(f"Dial-in connected: {data} and set_bot_ready")
-
-    @transport.event_handler("on_dialin_stopped")
-    async def on_dialin_stopped(transport, data):
-        logger.debug(f"Dial-in stopped: {data}")
-
-    @transport.event_handler("on_dialin_error")
-    async def on_dialin_error(transport, data):
-        logger.error(f"Dial-in error: {data}")
-        # the bot should leave the call if there is an error
-        await task.cancel()
-
-    @transport.event_handler("on_dialin_warning")
-    async def on_dialin_warning(transport, data):
-        logger.warning(f"Dial-in warning: {data}")
-
+    # Set up general event handlers
     @transport.event_handler("on_call_state_updated")
     async def on_call_state_updated(transport, state):
         logger.info(f"on_call_state_updated, state: {state}")
         if state == "joined" and dialout_settings:
-            logger.info(f"on_call_state_updated, dialout_settings: {dialout_settings}")
-            await start_dialout(transport, dialout_settings)
+            # Start dial-out once we're joined to the room
+            if "dialout" in handlers:
+                await handlers["dialout"].start_dialout()
         if state == "left":
             await task.cancel()
-
-    @transport.event_handler("on_first_participant_joined")
-    async def on_first_participant_joined(transport, participant):
-        logger.info("First participant joined: {}", participant["id"])
-        # Capture the participant's transcription
-        await transport.capture_participant_transcription(participant["id"])
-        # Kick off the conversation
-        if dialin_settings:
-            # For the dialin case, we want the bot to greet the user.
-            # We can prompt the bot to speak by putting the context into the pipeline.
-            await task.queue_frames([context_aggregator.user().get_context_frame()])
 
     @transport.event_handler("on_joined")
     async def on_joined(transport, data):
@@ -262,7 +331,6 @@ async def main(room_url: str, token: str, body: dict):
         await task.cancel()
 
     runner = PipelineRunner(handle_sigint=False, force_gc=True)
-
     await runner.run(task)
 
 

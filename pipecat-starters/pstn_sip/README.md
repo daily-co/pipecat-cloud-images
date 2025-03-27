@@ -20,12 +20,10 @@ inbound and outbound calls via PSTN (regular phone numbers) and SIP.
 
 You'll need the following API keys to get started:
 
+- `DAILY_API_KEY` (needed only for dial-in)
 - `OPENAI_API_KEY`
 - `DEEPGRAM_API_KEY`
 - `CARTESIA_API_KEY`
-
-> Your Pipecat Cloud account has a Daily account associated with it. That Daily
-> API key is automatically used when connecting with a DailyTransport.
 
 ### Phone number setup
 
