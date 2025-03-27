@@ -40,7 +40,10 @@ class AnthropicContextWithVisionTool(AnthropicLLMContext):
         if self._llm and self._rtvi:
             text_context = arguments["text_context"]
             await self._llm.request_image_frame(
-                user_id=self._video_participant_id, text_content=text_context
+                user_id=self._video_participant_id,
+                function_name=function_name,
+                tool_call_id=tool_call_id,
+                text_content=text_context,
             )
             await self._rtvi.handle_function_call(
                 function_name, tool_call_id, arguments, llm, context, None
