@@ -28,7 +28,7 @@ Starter templates offer pre-built configurations for common agent types:
 
 - **[voice](./pipecat-starters/voice)**: Voice conversation agent with STT, LLM and TTS
 - **[twilio](./pipecat-starters/twilio)**: Telephony agent that works with Twilio
-- **[pstn_sip](./pipecat-starter/pstn_sip)**: Dial-in or out to your agent using Daily's telephony offerings
+- **[pstn_sip](./pipecat-starters/pstn_sip)**: Dial-in or out to your agent using Daily's telephony offerings
 - **[natural conversation](./pipecat-starters/natural_conversation)**: Text chat agent focused on natural dialogue
 - **[openai realtime](./pipecat-starters/openai_realtime)**: Agent using OpenAI's streaming capabilities
 - **[gemini multimodal live](./pipecat-starters/gemini_multimodal_live)**: Multimodal agent using Google's Gemini models
