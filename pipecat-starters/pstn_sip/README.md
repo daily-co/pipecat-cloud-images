@@ -104,7 +104,6 @@ curl --request POST \
 --data-raw '{
     'createDailyRoom': true,
     'dailyRoomProperties': {
-        'enable_dialout': false,
         'sip': {'display_name': 'sip-dialin', 'sip_mode': 'dial-in', 'num_endpoints': 1},
         'exp': 1742353314
     },
@@ -152,8 +151,7 @@ curl --request POST \
 --data-raw '{
     'createDailyRoom': true,
     'dailyRoomProperties': {
-        'enable_dialout': false,
-        'sip': {'display_name': 'dial-in', 'sip_mode': 'dial-in', 'num_endpoints': 1},
+        'enable_dialout': true,
         'exp': 1742353929
     },
     'body': {
