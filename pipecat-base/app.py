@@ -35,8 +35,8 @@ logger.configure(extra={"session_id": "NONE"})
 
 
 async def run_bot(args: SessionArguments):
-    logger.bind(session_id=args.session_id)
-    await bot(args)
+    with logger.contextualize(session_id=args.session_id):
+        await bot(args)
 
 
 @app.post("/bot")
