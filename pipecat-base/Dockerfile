@@ -7,4 +7,4 @@ RUN pip install --no-cache-dir --upgrade -r /app/base_requirements.txt
 COPY ./app.py ./waiting_server.py /app/
 ARG VERSION
 ENV IMAGE_VERSION=$VERSION
-CMD ["python", "app.py"]
+CMD ["sh", "-c", "if [ -f /app/pre-app.sh ]; then sh /app/pre-app.sh; fi && python app.py"]
