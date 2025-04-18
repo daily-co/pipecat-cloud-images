@@ -5,4 +5,4 @@ RUN ln -s /krisp/python/pipecat_ai_krisp /usr/local/lib/python3.10/site-packages
 COPY ./requirements.txt /app/base_requirements.txt
 RUN pip install --no-cache-dir --upgrade -r /app/base_requirements.txt
 COPY ./app.py ./waiting_server.py /app/
-CMD ["python", "app.py"]
+CMD ["sh", "-c", "if [ -f /app/pre-app.sh ]; then sh /app/pre-app.sh; fi && python app.py"]
