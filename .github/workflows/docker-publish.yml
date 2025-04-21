@@ -2,9 +2,9 @@ name: Docker Build and Push
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   find-images:
@@ -14,7 +14,7 @@ jobs:
       version: ${{ steps.get-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      
+
       - id: get-version
         run: |
           VERSION=$(cat VERSION)
@@ -23,7 +23,7 @@ jobs:
             exit 1
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-      
+
       - id: set-images
         run: |
           IMAGES=$(find pipecat-starters -name Dockerfile -exec dirname {} \; | jq -R -s -c 'split("\n")[:-1]')
@@ -66,6 +66,7 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          buildArgs: IMAGE_VERSION=${{ needs.find-images.outputs.version }}
 
   build-starters:
     needs:

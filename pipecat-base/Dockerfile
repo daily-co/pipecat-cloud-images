@@ -5,4 +5,6 @@ RUN ln -s /krisp/python/pipecat_ai_krisp /usr/local/lib/python3.10/site-packages
 COPY ./requirements.txt /app/base_requirements.txt
 RUN pip install --no-cache-dir --upgrade -r /app/base_requirements.txt
 COPY ./app.py ./waiting_server.py /app/
+ARG VERSION
+ENV IMAGE_VERSION=$VERSION
 CMD ["python", "app.py"]

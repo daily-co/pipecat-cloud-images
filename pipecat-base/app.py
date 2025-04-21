@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 
+import json
 import sys
 from os import environ
 from typing import Annotated
 
+from bot import bot
 from fastapi import FastAPI, Header, WebSocket
 from fastapi.websockets import WebSocketState
 from loguru import logger
@@ -13,13 +15,14 @@ from pipecatcloud.agent import (
     SessionArguments,
     WebSocketSessionArguments,
 )
-
-from bot import bot
 from waiting_server import Config, WaitingServer
 
 app = FastAPI()
 server_config = Config(
-    environ.get("SHUTDOWN_TIMEOUT", 7200), app, host="0.0.0.0", port=int(environ.get("PORT", 8080))
+    environ.get("SHUTDOWN_TIMEOUT", 7200),
+    app,
+    host="0.0.0.0",
+    port=int(environ.get("PORT", 8080)),
 )
 server = WaitingServer(server_config)
 
@@ -33,9 +36,19 @@ logger.remove()
 logger.add(sys.stderr, format=session_logger_format)
 logger.configure(extra={"session_id": "NONE"})
 
+image_version = environ.get("IMAGE_VERSION", "unknown")
+
 
 async def run_bot(args: SessionArguments):
+    metadata = {
+        "session_id": args.session_id,
+        "image_version": image_version,
+    }
+
     with logger.contextualize(session_id=args.session_id):
+        logger.log(
+            "INFO", f"Starting bot session with metadata: {json.dumps(metadata)}"
+        )
         await bot(args)
 
 
