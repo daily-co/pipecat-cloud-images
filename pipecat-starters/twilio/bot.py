@@ -32,10 +32,27 @@ load_dotenv(override=True)
 async def main(ws: WebSocket):
     logger.debug("Starting WebSocket bot")
 
+    # Read initial WebSocket messages
     start_data = ws.iter_text()
     await start_data.__anext__()
+
+    # Second message contains the call details
     call_data = json.loads(await start_data.__anext__())
+
+    # Extract both StreamSid and CallSid
     stream_sid = call_data["start"]["streamSid"]
+    call_sid = call_data["start"]["callSid"]
+
+    logger.info(f"Connected to Twilio call: CallSid={call_sid}, StreamSid={stream_sid}")
+
+    # Create serializer with both IDs and auto_hang_up enabled
+    serializer = TwilioFrameSerializer(
+        stream_sid=stream_sid,
+        call_sid=call_sid,
+        account_sid=os.getenv("TWILIO_ACCOUNT_SID", ""),
+        auth_token=os.getenv("TWILIO_AUTH_TOKEN", ""),
+    )
+
     transport = FastAPIWebsocketTransport(
         websocket=ws,
         params=FastAPIWebsocketParams(
@@ -45,7 +62,7 @@ async def main(ws: WebSocket):
             vad_enabled=True,
             vad_analyzer=SileroVADAnalyzer(),
             vad_audio_passthrough=True,
-            serializer=TwilioFrameSerializer(stream_sid),
+            serializer=serializer,
         ),
     )
 
