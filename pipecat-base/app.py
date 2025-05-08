@@ -15,6 +15,7 @@ from pipecatcloud.agent import (
     SessionArguments,
     WebSocketSessionArguments,
 )
+
 from waiting_server import Config, WaitingServer
 
 app = FastAPI()
@@ -46,10 +47,11 @@ async def run_bot(args: SessionArguments):
     }
 
     with logger.contextualize(session_id=args.session_id):
-        logger.log(
-            "INFO", f"Starting bot session with metadata: {json.dumps(metadata)}"
-        )
-        await bot(args)
+        logger.info(f"Starting bot session with metadata: {json.dumps(metadata)}")
+        try:
+            await bot(args)
+        except Exception as e:
+            logger.error(f"Exception running bot(): {e}")
 
 
 @app.post("/bot")
