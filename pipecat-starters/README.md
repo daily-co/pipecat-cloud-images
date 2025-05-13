@@ -50,12 +50,12 @@ For detailed instructions on building, deploying, and running your agent, please
 5. **Deploy to Pipecat Cloud**:
 
    ```shell
-   pipecat deploy agent-name your-repository/my-agent:latest --secrets my-secrets
+   pcc deploy agent-name your-repository/my-agent:latest --secrets my-secrets
    ```
 
 6. **Start a session**:
    ```shell
-   pipecat agent start agent-name --use-daily
+   pcc agent start agent-name --use-daily
    ```
 
 ## Setting Up API Keys
@@ -63,7 +63,7 @@ For detailed instructions on building, deploying, and running your agent, please
 Different starters require various API keys, which should be added to your Pipecat Cloud secrets.
 
 ```shell
-pipecat secrets set my-secrets \
+pcc secrets set my-secrets \
   OPENAI_API_KEY=sk-... \
   DEEPGRAM_API_KEY=... \
   CARTESIA_API_KEY=...
