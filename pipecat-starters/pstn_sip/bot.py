@@ -14,21 +14,19 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import (
     EndTaskFrame,
 )
+from pipecat.observers.loggers.transcription_log_observer import (
+    TranscriptionLogObserver,
+)
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.processors.frame_processor import FrameDirection
-
 from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.llm_service import LLMService
-
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.transports.services.daily import DailyParams, DailyTransport
-from pipecat.observers.loggers.transcription_log_observer import (
-    TranscriptionLogObserver,
-)
 from pipecatcloud.agent import DailySessionArguments
 
 load_dotenv(override=True)
@@ -107,9 +105,7 @@ class DialInHandler:
 
             # For the dial-in case, we want the bot to greet the user.
             # We can prompt the bot to speak by putting the context into the pipeline.
-            await self.task.queue_frames(
-                [self.context_aggregator.user().get_context_frame()]
-            )
+            await self.task.queue_frames([self.context_aggregator.user().get_context_frame()])
 
 
 class DialOutHandler:
@@ -165,9 +161,7 @@ class DialOutHandler:
                     )
             elif "sipUri" in self.dialout_setting:
                 logger.info(f"Dialing sipUri: {self.dialout_setting['sipUri']}")
-                await self.transport.start_dialout(
-                    {"sipUri": self.dialout_setting["sipUri"]}
-                )
+                await self.transport.start_dialout({"sipUri": self.dialout_setting["sipUri"]})
         except Exception as e:
             logger.error(f"Error starting dialout: {e}")
             self.status = "failed"
@@ -221,16 +215,11 @@ async def main(room_url: str, token: str, body: dict):
     caller_phonenum = None
     if raw_dialin_settings := body.get("dialin_settings"):
         # these fields can capitalize the first letter
-        dialled_phonenum = raw_dialin_settings.get("To") or raw_dialin_settings.get(
-            "to"
-        )
-        caller_phonenum = raw_dialin_settings.get("From") or raw_dialin_settings.get(
-            "from"
-        )
+        dialled_phonenum = raw_dialin_settings.get("To") or raw_dialin_settings.get("to")
+        caller_phonenum = raw_dialin_settings.get("From") or raw_dialin_settings.get("from")
         dialin_settings = {
             # these fields can be received as snake_case or camelCase.
-            "call_id": raw_dialin_settings.get("callId")
-            or raw_dialin_settings.get("call_id"),
+            "call_id": raw_dialin_settings.get("callId") or raw_dialin_settings.get("call_id"),
             "call_domain": raw_dialin_settings.get("callDomain")
             or raw_dialin_settings.get("call_domain"),
         }
@@ -255,10 +244,9 @@ async def main(room_url: str, token: str, body: dict):
         DailyParams(
             api_key=os.getenv("DAILY_API_KEY"),  # needed for dial-in
             dialin_settings=dialin_settings,
+            audio_in_enabled=True,
             audio_out_enabled=True,
-            vad_enabled=True,
             vad_analyzer=SileroVADAnalyzer(),
-            vad_audio_passthrough=True,
         ),
     )
 
