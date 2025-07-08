@@ -11,22 +11,24 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       images: ${{ steps.set-images.outputs.images }}
-      version: ${{ steps.get-version.outputs.version }}
-      python-versions: ${{ steps.get-version.outputs.python-versions }}
-      default-python: ${{ steps.get-version.outputs.default-python }}
+      base-version: ${{ steps.get-versions.outputs.base-version }}
+      python-versions: ${{ steps.get-versions.outputs.python-versions }}
+      default-python: ${{ steps.get-versions.outputs.default-python }}
     steps:
       - uses: actions/checkout@v4
 
-      - id: get-version
+      - id: get-versions
         run: |
-          VERSION=$(yq '.version' versions.yaml)
-          PYTHON_VERSIONS=$(yq '.python_versions | @json' versions.yaml)
-          DEFAULT_PYTHON=$(yq '.default_python' versions.yaml)
-          if ! [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid version format in versions.yaml"
+          BASE_VERSION=$(yq '.base.version' versions.yaml)
+          PYTHON_VERSIONS=$(yq '.base.python_versions | @json' versions.yaml)
+          DEFAULT_PYTHON=$(yq '.base.default_python' versions.yaml)
+
+          if ! [[ $BASE_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid base version format in versions.yaml"
             exit 1
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          echo "base-version=$BASE_VERSION" >> $GITHUB_OUTPUT
           echo "python-versions=$PYTHON_VERSIONS" >> $GITHUB_OUTPUT
           echo "default-python=$DEFAULT_PYTHON" >> $GITHUB_OUTPUT
 
@@ -59,9 +61,9 @@ jobs:
           images: dailyco/pipecat-base
           tags: |
             type=raw,value=latest-py${{ matrix.python-version }}
-            type=raw,value=${{ needs.find-images.outputs.version }}-py${{ matrix.python-version }}
+            type=raw,value=${{ needs.find-images.outputs.base-version }}-py${{ matrix.python-version }}
             type=raw,value=latest,enable=${{ matrix.python-version == needs.find-images.outputs.default-python }}
-            type=raw,value=${{ needs.find-images.outputs.version }},enable=${{ matrix.python-version == needs.find-images.outputs.default-python }}
+            type=raw,value=${{ needs.find-images.outputs.base-version }},enable=${{ matrix.python-version == needs.find-images.outputs.default-python }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -78,7 +80,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            VERSION=${{ needs.find-images.outputs.version }}
+            VERSION=${{ needs.find-images.outputs.base-version }}
             PYTHON_VERSION=${{ matrix.python-version }}
 
   build-starters:
@@ -94,6 +96,25 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Get starter version
+        id: get-starter-version
+        run: |
+          IMAGE_LOCATION=${{ matrix.image }}
+          STARTER_NAME=$(basename ${IMAGE_LOCATION})
+          STARTER_VERSION=$(yq ".starters.${STARTER_NAME}" versions.yaml)
+
+          if [ "$STARTER_VERSION" = "null" ]; then
+            echo "Error: No version found for starter '${STARTER_NAME}' in versions.yaml"
+            exit 1
+          fi
+
+          if ! [[ $STARTER_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version format for starter '${STARTER_NAME}' in versions.yaml: $STARTER_VERSION"
+            exit 1
+          fi
+
+          echo "starter-version=$STARTER_VERSION" >> $GITHUB_OUTPUT
 
       - name: Create image name
         id: createImageName
@@ -116,7 +137,7 @@ jobs:
           images: dailyco/${{ steps.createImageName.outputs.imageName }}
           tags: |
             type=raw,value=latest
-            type=raw,value=${{ needs.find-images.outputs.version }}
+            type=raw,value=${{ steps.get-starter-version.outputs.starter-version }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

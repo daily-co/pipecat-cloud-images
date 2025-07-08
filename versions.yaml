@@ -1,7 +1,18 @@
-version: '0.0.9'
-python_versions:
-  - '3.10'
-  - '3.11'
-  - '3.12'
-  - '3.13'
-default_python: '3.10'
+base:
+  version: '0.0.9'
+  python_versions:
+    - '3.10'
+    - '3.11'
+    - '3.12'
+    - '3.13'
+  default_python: '3.10'
+
+starters:
+  gemini_multimodal_live: '0.0.8'
+  natural_conversation: '0.0.8'
+  openai_realtime: '0.0.8'
+  pstn_sip: '0.0.8'
+  telnyx: '0.0.8'
+  twilio: '0.0.8'
+  vision: '0.0.8'
+  voice: '0.0.8'
