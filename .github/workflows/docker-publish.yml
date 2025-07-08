@@ -2,9 +2,9 @@ name: Docker Build and Push
 
 on:
   push:
-    branches: ["main"]
+    branches: ['main']
   pull_request:
-    branches: ["main"]
+    branches: ['main']
 
 jobs:
   find-images:
@@ -12,17 +12,23 @@ jobs:
     outputs:
       images: ${{ steps.set-images.outputs.images }}
       version: ${{ steps.get-version.outputs.version }}
+      python-versions: ${{ steps.get-version.outputs.python-versions }}
+      default-python: ${{ steps.get-version.outputs.default-python }}
     steps:
       - uses: actions/checkout@v4
 
       - id: get-version
         run: |
-          VERSION=$(cat VERSION)
+          VERSION=$(yq '.version' versions.yaml)
+          PYTHON_VERSIONS=$(yq '.python_versions | @json' versions.yaml)
+          DEFAULT_PYTHON=$(yq '.default_python' versions.yaml)
           if ! [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid version format in VERSION file"
+            echo "Invalid version format in versions.yaml"
             exit 1
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "python-versions=$PYTHON_VERSIONS" >> $GITHUB_OUTPUT
+          echo "default-python=$DEFAULT_PYTHON" >> $GITHUB_OUTPUT
 
       - id: set-images
         run: |
@@ -30,8 +36,11 @@ jobs:
           echo "images=$IMAGES" >> $GITHUB_OUTPUT
   build-base:
     runs-on: ubuntu-latest
-    name: Build Base
+    name: Build Base Images
     needs: find-images
+    strategy:
+      matrix:
+        python-version: ${{ fromJson(needs.find-images.outputs.python-versions) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -49,8 +58,10 @@ jobs:
         with:
           images: dailyco/pipecat-base
           tags: |
-            type=raw,value=latest
-            type=raw,value=${{ needs.find-images.outputs.version }}
+            type=raw,value=latest-py${{ matrix.python-version }}
+            type=raw,value=${{ needs.find-images.outputs.version }}-py${{ matrix.python-version }}
+            type=raw,value=latest,enable=${{ matrix.python-version == needs.find-images.outputs.default-python }}
+            type=raw,value=${{ needs.find-images.outputs.version }},enable=${{ matrix.python-version == needs.find-images.outputs.default-python }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -66,7 +77,9 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: IMAGE_VERSION=${{ needs.find-images.outputs.version }}
+          build-args: |
+            VERSION=${{ needs.find-images.outputs.version }}
+            PYTHON_VERSION=${{ matrix.python-version }}
 
   build-starters:
     needs:

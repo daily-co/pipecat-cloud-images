@@ -11,15 +11,41 @@ This image provides the foundational runtime environment for running agents on P
 - Automatic handling of room URLs and tokens
 - Logging infrastructure optimized for cloud environments
 
+## Python Version Support
+
+We provide base images for multiple Python versions. See `versions.yaml` for the current list of supported versions.
+
+Currently supported Python versions:
+
+- Python 3.10: `dailyco/pipecat-base:latest-py3.10` or `dailyco/pipecat-base:latest` (default)
+- Python 3.11: `dailyco/pipecat-base:latest-py3.11`
+- Python 3.12: `dailyco/pipecat-base:latest-py3.12`
+- Python 3.13: `dailyco/pipecat-base:latest-py3.13`
+
 ## Usage
 
 When creating your own agent, use this base image in your Dockerfile:
 
 ```Dockerfile
+# Using default Python version
 FROM dailyco/pipecat-base:latest
 COPY ./requirements.txt requirements.txt
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 COPY ./bot.py bot.py
+
+# Or specify a specific Python version
+FROM dailyco/pipecat-base:latest-py3.12
+COPY ./requirements.txt requirements.txt
+RUN pip install --no-cache-dir --upgrade -r requirements.txt
+COPY ./bot.py bot.py
+```
+
+### Versioned Images
+
+You can also pin to specific versions:
+
+```Dockerfile
+FROM dailyco/pipecat-base:0.0.9-py3.11
 ```
 
 ### Requirements
