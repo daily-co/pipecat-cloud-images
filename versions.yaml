@@ -12,7 +12,6 @@ starters:
   natural_conversation: '0.0.8'
   openai_realtime: '0.0.8'
   pstn_sip: '0.0.8'
-  telnyx: '0.0.8'
   twilio: '0.0.8'
   vision: '0.0.8'
   voice: '0.0.8'
