@@ -5,6 +5,32 @@ All notable changes to the **Pipecat Cloud Starter Images** will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2025-07-22]
+
+### gemini_multimodal_live (0.0.9)
+
+#### Fixed
+
+- Pipeline runner uses `handle_sigint=False` and forced garbage collection.
+
+### natural_conversation (0.0.9)
+
+#### Fixed
+
+- Pipeline runner uses `handle_sigint=False` and forced garbage collection.
+
+### openai_realtime (0.0.9)
+
+#### Fixed
+
+- Pipeline runner uses `handle_sigint=False` and forced garbage collection.
+
+### vision (0.0.9)
+
+#### Fixed
+
+- Pipeline runner uses `handle_sigint=False` and forced garbage collection.
+
 ## [2025-07-08]
 
 ### gemini_multimodal_live (0.0.8)
