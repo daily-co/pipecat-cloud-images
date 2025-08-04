@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vision`: 0.0.9 → 0.0.10
 - `voice`: 0.0.8 → 0.0.9
 
+### plivo (0.0.1)
+
+- Initial changelog entry. Added a new Plivo starter that uses the Pipecat
+  runner.
+
 ### telnyx (0.0.1)
 
 - Initial changelog entry. Added a new Telnyx starter that uses the Pipecat
