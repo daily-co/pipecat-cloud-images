@@ -9,7 +9,7 @@ A telephone-based conversational agent built with Pipecat that connects to Telny
   - OpenAI (LLM)
   - Cartesia (TTS)
 - Voice activity detection with Silero
-- FastAPI WebSocket connection with Twilio
+- FastAPI WebSocket connection with Telnyx
 - 8kHz audio sampling optimized for telephone calls
 
 ## Required API Keys
@@ -17,7 +17,8 @@ A telephone-based conversational agent built with Pipecat that connects to Telny
 - `OPENAI_API_KEY`
 - `DEEPGRAM_API_KEY`
 - `CARTESIA_API_KEY`
-- Twilio account with Media Streams configured
+- `TELNYX_API_KEY`
+- Telnyx account with Media Streaming configured
 
 ## Quick Customization
 
@@ -41,13 +42,13 @@ Update the voice ID in the TTS service:
 ```python
 tts = CartesiaTTSService(
     api_key=os.getenv("CARTESIA_API_KEY"),
-    voice_id="79a125e8-cd45-4c13-8a67-188112f4dd22", # Change this
+    voice_id="71a7ad14-091c-4e8e-a314-022ece01c121", # Change this
 )
 ```
 
 ### Adjust Audio Parameters
 
-The pipeline is configured for telephone-quality audio (8kHz). If your Twilio configuration uses different parameters, adjust these values:
+The pipeline is configured for telephone-quality audio (8kHz). If your Telnyx configuration uses different parameters, adjust these values:
 
 ```python
 task = PipelineTask(
@@ -60,11 +61,11 @@ task = PipelineTask(
 )
 ```
 
-## Twilio Setup
+## Telnyx Setup
 
-To connect this agent to Twilio:
+To connect this agent to Telnyx:
 
-1. [Purchase a number from Twilio](https://help.twilio.com/articles/223135247-How-to-Search-for-and-Buy-a-Twilio-Phone-Number-from-Console), if you haven't already
+1. [Purchase a number from Telnyx](https://telnyx.com/resources/purchase-a-phone-number-with-telnyx), if you haven't already
 
 2. Collect your Pipecat Cloud organization name:
 
@@ -74,29 +75,29 @@ pcc organizations list
 
 You'll use this information in the next step.
 
-3. Create a [TwiML Bin](https://help.twilio.com/articles/360043489573-Getting-started-with-TwiML-Bins):
+3. Create a [TeXML Application](https://developers.telnyx.com/docs/voice/programmable-voice/texml-setup):
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <Stream url="wss://api.pipecat.daily.co/ws/twilio">
-      <Parameter name="_pipecatCloudServiceHost" value="AGENT_NAME.ORGANIZATION_NAME"/>
-    </Stream>
+    <Stream url="wss://api.pipecat.daily.co/ws/telnyx?serviceHost=AGENT_NAME.ORGANIZATION_NAME" bidirectionalMode="rtp"></Stream>
   </Connect>
+  <Pause length="40"/>
 </Response>
 ```
 
 where:
 
-- AGENT_NAME is your agent's name (the name you used when deploying)
-- ORGANIZATION_NAME is the value returned in the previous step
+- `AGENT_NAME` is your agent's name (the name you used when deploying)
+- `ORGANIZATION_NAME` is the value returned in the previous step
 
-4. Assign the TwiML Bin to your phone number:
+4. Assign the TeXML Application to your phone number:
 
-- Select your number from the Twilio dashboard
-- In the `Configure` tab, set `A call comes in` to `TwiML Bin`
-- Set `TwiML Bin` to the Bin you created in the previous step
+- Navigate to Voice → Programmable Voice in your Telnyx dashboard
+- In the TeXML Applications tab, select the pencil icon for the TeXML Application you created in step 3
+- In the Numbers tab, select Assign numbers
+- Select the number you would like to assign the TeXML Application to
 - Save your configuration
 
 ## Deployment
