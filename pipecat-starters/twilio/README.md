@@ -68,36 +68,36 @@ To connect this agent to Twilio:
 
 2. Collect your Pipecat Cloud organization name:
 
-```bash
-pcc organizations list
-```
+   ```bash
+   pcc organizations list
+   ```
 
 You'll use this information in the next step.
 
 3. Create a [TwiML Bin](https://help.twilio.com/articles/360043489573-Getting-started-with-TwiML-Bins):
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Connect>
-    <Stream url="wss://api.pipecat.daily.co/ws/twilio">
-      <Parameter name="_pipecatCloudServiceHost" value="AGENT_NAME.ORGANIZATION_NAME"/>
-    </Stream>
-  </Connect>
-</Response>
-```
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <Response>
+     <Connect>
+       <Stream url="wss://api.pipecat.daily.co/ws/twilio">
+         <Parameter name="_pipecatCloudServiceHost" value="AGENT_NAME.ORGANIZATION_NAME"/>
+       </Stream>
+     </Connect>
+   </Response>
+   ```
 
-where:
+   where:
 
-- AGENT_NAME is your agent's name (the name you used when deploying)
-- ORGANIZATION_NAME is the value returned in the previous step
+   - AGENT_NAME is your agent's name (the name you used when deploying)
+   - ORGANIZATION_NAME is the value returned in the previous step
 
 4. Assign the TwiML Bin to your phone number:
 
-- Select your number from the Twilio dashboard
-- In the `Configure` tab, set `A call comes in` to `TwiML Bin`
-- Set `TwiML Bin` to the Bin you created in the previous step
-- Save your configuration
+   - Select your number from the Twilio dashboard
+   - In the `Configure` tab, set `A call comes in` to `TwiML Bin`
+   - Set `TwiML Bin` to the Bin you created in the previous step
+   - Save your configuration
 
 ## Deployment
 

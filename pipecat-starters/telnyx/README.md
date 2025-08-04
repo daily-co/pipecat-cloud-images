@@ -69,36 +69,36 @@ To connect this agent to Telnyx:
 
 2. Collect your Pipecat Cloud organization name:
 
-```bash
-pcc organizations list
-```
+   ```bash
+   pcc organizations list
+   ```
 
-You'll use this information in the next step.
+   You'll use this information in the next step.
 
 3. Create a [TeXML Application](https://developers.telnyx.com/docs/voice/programmable-voice/texml-setup):
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Connect>
-    <Stream url="wss://api.pipecat.daily.co/ws/telnyx?serviceHost=AGENT_NAME.ORGANIZATION_NAME" bidirectionalMode="rtp"></Stream>
-  </Connect>
-  <Pause length="40"/>
-</Response>
-```
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <Response>
+     <Connect>
+       <Stream url="wss://api.pipecat.daily.co/ws/telnyx?serviceHost=AGENT_NAME.ORGANIZATION_NAME" bidirectionalMode="rtp"></Stream>
+     </Connect>
+     <Pause length="40"/>
+   </Response>
+   ```
 
-where:
+   where:
 
-- `AGENT_NAME` is your agent's name (the name you used when deploying)
-- `ORGANIZATION_NAME` is the value returned in the previous step
+   - `AGENT_NAME` is your agent's name (the name you used when deploying)
+   - `ORGANIZATION_NAME` is the value returned in the previous step
 
 4. Assign the TeXML Application to your phone number:
 
-- Navigate to Voice → Programmable Voice in your Telnyx dashboard
-- In the TeXML Applications tab, select the pencil icon for the TeXML Application you created in step 3
-- In the Numbers tab, select Assign numbers
-- Select the number you would like to assign the TeXML Application to
-- Save your configuration
+   - Navigate to Voice → Programmable Voice in your Telnyx dashboard
+   - In the TeXML Applications tab, select the pencil icon for the TeXML Application you created in step 3
+   - In the Numbers tab, select Assign numbers
+   - Select the number you would like to assign the TeXML Application to
+   - Save your configuration
 
 ## Deployment
 

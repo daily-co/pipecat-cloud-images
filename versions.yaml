@@ -11,6 +11,7 @@ starters:
   gemini_multimodal_live: '0.0.11'
   natural_conversation: '0.0.11'
   openai_realtime: '0.0.11'
+  plivo: '0.0.1'
   pstn_sip: '0.0.9'
   twilio: '0.0.9'
   vision: '0.0.11'
