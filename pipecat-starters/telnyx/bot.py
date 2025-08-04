@@ -29,11 +29,9 @@ load_dotenv(override=True)
 
 
 async def run_bot(transport: BaseTransport):
-    """Run your bot with the provided transport.
+    """Main bot logic that works with any transport."""
+    logger.info("Starting bot")
 
-    Args:
-        transport (BaseTransport): The transport to use for communication.
-    """
     # Configure your STT, LLM, and TTS services here
     # Swap out different processors or properties to customize your bot
     stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
@@ -100,29 +98,24 @@ async def run_bot(transport: BaseTransport):
 
 
 async def bot(runner_args: RunnerArguments):
-    """Main bot entry point compatible with Pipecat Cloud."""
+    """Main bot entry point compatible with the development runner."""
+    logger.info("Bot process initialized")
 
     transport = None
-
-    if os.environ.get("ENV") != "local":
-        from pipecat.audio.filters.krisp_filter import KrispFilter
-
-        krisp_filter = KrispFilter()
-    else:
-        krisp_filter = None
 
     transport_type, call_data = await parse_telephony_websocket(runner_args.websocket)
     logger.info(f"Auto-detected transport: {transport_type}")
 
     # Create transport based on detected type
-    if transport_type == "twilio":
-        from pipecat.serializers.twilio import TwilioFrameSerializer
+    if transport_type == "telnyx":
+        from pipecat.serializers.telnyx import TelnyxFrameSerializer
 
-        serializer = TwilioFrameSerializer(
-            stream_sid=call_data["stream_id"],
-            call_sid=call_data["call_id"],
-            account_sid=os.getenv("TWILIO_ACCOUNT_SID", ""),
-            auth_token=os.getenv("TWILIO_AUTH_TOKEN", ""),
+        serializer = TelnyxFrameSerializer(
+            stream_id=call_data["stream_id"],
+            call_control_id=call_data["call_control_id"],
+            outbound_encoding=call_data["outbound_encoding"],
+            inbound_encoding="PCMU",  # Standard default
+            api_key=os.getenv("TELNYX_API_KEY", ""),
         )
 
     else:
@@ -134,7 +127,6 @@ async def bot(runner_args: RunnerArguments):
         websocket=runner_args.websocket,
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
-            audio_in_filter=krisp_filter,
             audio_out_enabled=True,
             add_wav_header=False,
             vad_analyzer=SileroVADAnalyzer(),
