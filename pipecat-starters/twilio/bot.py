@@ -4,11 +4,9 @@
 # SPDX-License-Identifier: BSD 2-Clause License
 #
 
-import json
 import os
 
 from dotenv import load_dotenv
-from fastapi import WebSocket
 from loguru import logger
 from openai._types import NotGiven
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -16,54 +14,26 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-from pipecat.serializers.twilio import TwilioFrameSerializer
+from pipecat.runner.types import RunnerArguments
+from pipecat.runner.utils import parse_telephony_websocket
 from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.transports.base_transport import BaseTransport
 from pipecat.transports.network.fastapi_websocket import (
     FastAPIWebsocketParams,
     FastAPIWebsocketTransport,
 )
-from pipecatcloud.agent import WebSocketSessionArguments
 
 load_dotenv(override=True)
 
 
-async def main(ws: WebSocket):
-    logger.debug("Starting WebSocket bot")
+async def run_bot(transport: BaseTransport):
+    """Run your bot with the provided transport.
 
-    # Read initial WebSocket messages
-    start_data = ws.iter_text()
-    await start_data.__anext__()
-
-    # Second message contains the call details
-    call_data = json.loads(await start_data.__anext__())
-
-    # Extract both StreamSid and CallSid
-    stream_sid = call_data["start"]["streamSid"]
-    call_sid = call_data["start"]["callSid"]
-
-    logger.info(f"Connected to Twilio call: CallSid={call_sid}, StreamSid={stream_sid}")
-
-    # Create serializer with both IDs and auto_hang_up enabled
-    serializer = TwilioFrameSerializer(
-        stream_sid=stream_sid,
-        call_sid=call_sid,
-        account_sid=os.getenv("TWILIO_ACCOUNT_SID", ""),
-        auth_token=os.getenv("TWILIO_AUTH_TOKEN", ""),
-    )
-
-    transport = FastAPIWebsocketTransport(
-        websocket=ws,
-        params=FastAPIWebsocketParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            add_wav_header=False,
-            vad_analyzer=SileroVADAnalyzer(),
-            serializer=serializer,
-        ),
-    )
-
+    Args:
+        transport (BaseTransport): The transport to use for communication.
+    """
     # Configure your STT, LLM, and TTS services here
     # Swap out different processors or properties to customize your bot
     stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
@@ -130,18 +100,62 @@ async def main(ws: WebSocket):
     await runner.run(task)
 
 
-async def bot(args: WebSocketSessionArguments):
-    """Main bot entry point for WebSocket connections.
+async def bot(runner_args: RunnerArguments):
+    """Main bot entry point compatible with Pipecat Cloud."""
 
-    Args:
-        ws: The WebSocket connection
-        session_logger: The session-specific logger
-    """
-    logger.info("WebSocket bot process initialized")
+    transport = None
+
+    if os.environ.get("ENV") != "local":
+        from pipecat.audio.filters.krisp_filter import KrispFilter
+
+        krisp_filter = KrispFilter()
+    else:
+        krisp_filter = None
+
+    transport_type, call_data = await parse_telephony_websocket(runner_args.websocket)
+    logger.info(f"Auto-detected transport: {transport_type}")
+
+    # Create transport based on detected type
+    if transport_type == "twilio":
+        from pipecat.serializers.twilio import TwilioFrameSerializer
+
+        serializer = TwilioFrameSerializer(
+            stream_sid=call_data["stream_id"],
+            call_sid=call_data["call_id"],
+            account_sid=os.getenv("TWILIO_ACCOUNT_SID", ""),
+            auth_token=os.getenv("TWILIO_AUTH_TOKEN", ""),
+        )
+
+    else:
+        logger.error(f"Unsupported telephony provider: {transport_type}")
+        return
+
+    # Create the transport
+    transport = FastAPIWebsocketTransport(
+        websocket=runner_args.websocket,
+        params=FastAPIWebsocketParams(
+            audio_in_enabled=True,
+            audio_in_filter=krisp_filter,
+            audio_out_enabled=True,
+            add_wav_header=False,
+            vad_analyzer=SileroVADAnalyzer(),
+            serializer=serializer,
+        ),
+    )
+
+    if transport is None:
+        logger.error("Failed to create transport")
+        return
 
     try:
-        await main(args.websocket)
-        logger.info("WebSocket bot process completed")
+        await run_bot(transport)
+        logger.info("Bot process completed")
     except Exception as e:
-        logger.exception(f"Error in WebSocket bot process: {str(e)}")
+        logger.exception(f"Error in bot process: {str(e)}")
         raise
+
+
+if __name__ == "__main__":
+    from pipecat.runner.run import main
+
+    main()

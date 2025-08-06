@@ -39,14 +39,15 @@ from pipecat.processors.frameworks.rtvi import (
     RTVIProcessor,
 )
 from pipecat.processors.user_idle_processor import UserIdleProcessor
+from pipecat.runner.types import RunnerArguments
 from pipecat.services.anthropic.llm import AnthropicLLMService
 from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.openai import OpenAILLMService
 from pipecat.sync.base_notifier import BaseNotifier
 from pipecat.sync.event_notifier import EventNotifier
+from pipecat.transports.base_transport import BaseTransport
 from pipecat.transports.services.daily import DailyParams, DailyTransport
-from pipecatcloud.agent import DailySessionArguments
 
 load_dotenv(override=True)
 
@@ -344,20 +345,12 @@ class OutputGate(FrameProcessor):
                 break
 
 
-async def main(room_url: str, token: str):
-    logger.debug("starting bot in room: {}", room_url)
+async def run_bot(transport: BaseTransport):
+    """Run your bot with the provided transport.
 
-    transport = DailyTransport(
-        room_url,
-        token,
-        "Voice AI Bot",
-        DailyParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            vad_analyzer=SileroVADAnalyzer(),
-        ),
-    )
-
+    Args:
+        transport (BaseTransport): The transport to use for communication.
+    """
     # Configure your STT, LLM, and TTS services here
     # Swap out different processors or properties to customize your bot
     stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
@@ -477,17 +470,17 @@ async def main(room_url: str, token: str):
         await transport.on_recording_started(status)
         await rtvi.set_bot_ready()
 
-    @transport.event_handler("on_first_participant_joined")
-    async def on_first_participant_joined(transport, participant):
-        logger.info("First participant joined: {}", participant["id"])
+    @transport.event_handler("on_client_connected")
+    async def on_client_connected(transport, participant):
+        logger.info("Client connected: {}", participant["id"])
         # Capture the participant's transcription
         await transport.capture_participant_transcription(participant["id"])
         # Kick off the conversation
         await task.queue_frames([context_aggregator.user().get_context_frame()])
 
-    @transport.event_handler("on_participant_left")
-    async def on_participant_left(transport, participant, reason):
-        logger.info("Participant left: {}", participant)
+    @transport.event_handler("on_client_disconnected")
+    async def on_client_disconnected(transport, participant, reason):
+        logger.info("Client disconnected: {}", participant)
         await task.cancel()
 
     runner = PipelineRunner(handle_sigint=False, force_gc=True)
@@ -495,20 +488,43 @@ async def main(room_url: str, token: str):
     await runner.run(task)
 
 
-async def bot(args: DailySessionArguments):
-    """Main bot entry point compatible with the FastAPI route handler.
+async def bot(runner_args: RunnerArguments):
+    """Main bot entry point compatible with Pipecat Cloud."""
 
-    Args:
-        room_url: The Daily room URL
-        token: The Daily room token
-        body: The configuration object from the request body
-        session_id: The session ID for logging
-    """
-    logger.info(f"Bot process initialized {args.room_url} {args.token}")
+    transport = None
+
+    if os.environ.get("ENV") != "local":
+        from pipecat.audio.filters.krisp_filter import KrispFilter
+
+        krisp_filter = KrispFilter()
+    else:
+        krisp_filter = None
+
+    transport = DailyTransport(
+        runner_args.room_url,
+        runner_args.token,
+        "Pipecat Bot",
+        params=DailyParams(
+            audio_in_enabled=True,
+            audio_in_filter=krisp_filter,
+            audio_out_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(),
+        ),
+    )
+
+    if transport is None:
+        logger.error("Failed to create transport")
+        return
 
     try:
-        await main(args.room_url, args.token)
+        await run_bot(transport)
         logger.info("Bot process completed")
     except Exception as e:
         logger.exception(f"Error in bot process: {str(e)}")
         raise
+
+
+if __name__ == "__main__":
+    from pipecat.runner.run import main
+
+    main()
