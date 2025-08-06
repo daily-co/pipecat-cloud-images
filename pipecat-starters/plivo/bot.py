@@ -14,7 +14,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-from pipecat.runner.types import RunnerArguments, WebSocketRunnerArguments
+from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import parse_telephony_websocket
 from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.deepgram.stt import DeepgramSTTService
@@ -29,7 +29,10 @@ load_dotenv(override=True)
 
 
 async def run_bot(transport: BaseTransport):
-    """Main bot logic that works with any transport."""
+    """Run your bot with the provided transport.
+    Args:
+        transport (BaseTransport): The transport to use for communication.
+    """
     logger.info("Starting bot")
 
     # Configure your STT, LLM, and TTS services here
@@ -102,7 +105,14 @@ async def bot(runner_args: RunnerArguments):
     logger.info("Bot process initialized")
 
     transport = None
-        
+
+    if os.environ.get("ENV") != "local":
+        from pipecat.audio.filters.krisp_filter import KrispFilter
+
+        krisp_filter = KrispFilter()
+    else:
+        krisp_filter = None
+
     transport_type, call_data = await parse_telephony_websocket(runner_args.websocket)
     logger.info(f"Auto-detected transport: {transport_type}")
 
@@ -125,6 +135,7 @@ async def bot(runner_args: RunnerArguments):
         websocket=runner_args.websocket,
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
+            audio_in_filter=krisp_filter,
             audio_out_enabled=True,
             add_wav_header=False,
             vad_analyzer=SileroVADAnalyzer(),
