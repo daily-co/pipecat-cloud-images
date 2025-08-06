@@ -29,7 +29,10 @@ load_dotenv(override=True)
 
 
 async def run_bot(transport: BaseTransport):
-    """Main bot logic that works with any transport."""
+    """Run your bot with the provided transport.
+    Args:
+        transport (BaseTransport): The transport to use for communication.
+    """
     logger.info("Starting bot")
 
     # Configure your STT, LLM, and TTS services here
@@ -103,6 +106,13 @@ async def bot(runner_args: RunnerArguments):
 
     transport = None
 
+    if os.environ.get("ENV") != "local":
+        from pipecat.audio.filters.krisp_filter import KrispFilter
+
+        krisp_filter = KrispFilter()
+    else:
+        krisp_filter = None
+
     transport_type, call_data = await parse_telephony_websocket(runner_args.websocket)
     logger.info(f"Auto-detected transport: {transport_type}")
 
@@ -127,6 +137,7 @@ async def bot(runner_args: RunnerArguments):
         websocket=runner_args.websocket,
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
+            audio_in_filter=krisp_filter,
             audio_out_enabled=True,
             add_wav_header=False,
             vad_analyzer=SileroVADAnalyzer(),
