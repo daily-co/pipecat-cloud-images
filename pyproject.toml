@@ -1,0 +1,24 @@
+# Minimal project metadata for tooling
+[project]
+name = "pipecat-cloud-images"
+version = "0.0.0"
+description = "Pipecat Cloud Base and Starter images"
+requires-python = ">=3.10"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pipecatcloud>=0.2.0",
+    "pipecat-ai>=0.0.77",
+    "pre-commit~=4.2.0",
+    "ruff~=0.12.1",
+    "python-dotenv>=1.0.1,<2.0.0"
+]
+
+[tool.ruff]
+exclude = [".git"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["I"]
+ignore = []

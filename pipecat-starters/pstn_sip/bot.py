@@ -22,10 +22,12 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.processors.frame_processor import FrameDirection
+from pipecat.runner.types import RunnerArguments
 from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.llm_service import LLMService
 from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.transports.base_transport import BaseTransport
 from pipecat.transports.services.daily import DailyParams, DailyTransport
 from pipecatcloud.agent import DailySessionArguments
 
@@ -203,9 +205,12 @@ class DialOutHandler:
             logger.warning(f"Dial-out warning: {data}")
 
 
-async def main(room_url: str, token: str, body: dict):
-    logger.debug("Starting bot in room: {}", room_url)
+async def run_bot(transport: BaseTransport, body: dict = {}):
+    """Run your bot with the provided transport.
 
+    Args:
+        transport (BaseTransport): The transport to use for communication.
+    """
     # Dial-in configuration:
     # dialin_settings are received when a call is triggered to
     # Daily via pinless_dialin. This can be a phone number on Daily or a
@@ -236,19 +241,6 @@ async def main(room_url: str, token: str, body: dict):
     using_voicemail_detection = bool(voicemail_detection and dialout_settings)
 
     logger.debug(f"Using voicemail detection: {using_voicemail_detection}")
-
-    transport = DailyTransport(
-        room_url,
-        token,
-        "Voice AI Bot",
-        DailyParams(
-            api_key=os.getenv("DAILY_API_KEY"),  # needed for dial-in
-            dialin_settings=dialin_settings,
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            vad_analyzer=SileroVADAnalyzer(),
-        ),
-    )
 
     # Configure your STT, LLM, and TTS services here
     # Swap out different processors or properties to customize your bot
@@ -414,20 +406,43 @@ async def main(room_url: str, token: str, body: dict):
     await runner.run(task)
 
 
-async def bot(args: DailySessionArguments):
-    """Main bot entry point compatible with the FastAPI route handler.
+async def bot(runner_args: RunnerArguments):
+    """Main bot entry point compatible with Pipecat Cloud."""
 
-    Args:
-        room_url: The Daily room URL
-        token: The Daily room token
-        body: The configuration object from the request body can contain dialin_settings, dialout_settings, voicemail_detection, and call_transfer
-        session_id: The session ID for logging
-    """
-    logger.info(f"Bot process initialized {args.room_url} {args.token}")
+    transport = None
+
+    if os.environ.get("ENV") != "local":
+        from pipecat.audio.filters.krisp_filter import KrispFilter
+
+        krisp_filter = KrispFilter()
+    else:
+        krisp_filter = None
+
+    transport = DailyTransport(
+        runner_args.room_url,
+        runner_args.token,
+        "Pipecat Bot",
+        params=DailyParams(
+            audio_in_enabled=True,
+            audio_in_filter=krisp_filter,
+            audio_out_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(),
+        ),
+    )
+
+    if transport is None:
+        logger.error("Failed to create transport")
+        return
 
     try:
-        await main(args.room_url, args.token, args.body)
+        await run_bot(transport, runner_args.body)
         logger.info("Bot process completed")
     except Exception as e:
         logger.exception(f"Error in bot process: {str(e)}")
         raise
+
+
+if __name__ == "__main__":
+    from pipecat.runner.run import main
+
+    main()

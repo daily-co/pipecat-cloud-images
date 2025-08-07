@@ -1,3 +1,2 @@
-pipecat-ai[openai,daily,deepgram,cartesia,silero]
-python-dotenv
-pipecatcloud
+pipecatcloud>=0.2.0
+pipecat-ai[openai,daily,deepgram,cartesia,silero,runner]>=0.0.77

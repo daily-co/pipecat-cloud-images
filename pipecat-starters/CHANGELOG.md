@@ -5,6 +5,23 @@ All notable changes to the **Pipecat Cloud Starter Images** will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **All Images**: Updated to use the new Pipecat runner
+- **All Images**: Enabled Krisp for production deployment (set `enable_krisp = true` in your pcc-deploy.toml file)
+
+### Updated Images
+
+- `gemini_multimodal_live`: 0.0.9 → 0.0.10
+- `natural_conversation`: 0.0.9 → 0.0.10
+- `openai_realtime`: 0.0.9 → 0.0.10
+- `pstn_sip`: 0.0.8 → 0.0.9
+- `twilio`: 0.0.8 → 0.0.9
+- `vision`: 0.0.9 → 0.0.10
+- `voice`: 0.0.8 → 0.0.9
+
 ## [2025-07-22]
 
 ### gemini_multimodal_live (0.0.9)
