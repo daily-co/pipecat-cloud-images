@@ -8,10 +8,10 @@ base:
   default_python: '3.10'
 
 starters:
-  gemini_multimodal_live: '0.0.10'
-  natural_conversation: '0.0.10'
-  openai_realtime: '0.0.10'
+  gemini_multimodal_live: '0.0.11'
+  natural_conversation: '0.0.11'
+  openai_realtime: '0.0.11'
   pstn_sip: '0.0.9'
   twilio: '0.0.9'
-  vision: '0.0.10'
-  voice: '0.0.9'
+  vision: '0.0.11'
+  voice: '0.0.10'
