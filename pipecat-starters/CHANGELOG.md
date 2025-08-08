@@ -5,7 +5,23 @@ All notable changes to the **Pipecat Cloud Starter Images** will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2025-08-08]
+
+### Fixed
+
+- Fixed an issue in a number of starts where an error was through due to
+  `reason` being included as an arg in the `on_client_disconnected` event
+  handler.
+
+### Updated Images
+
+- `gemini_multimodal_live`: 0.0.10 → 0.0.11
+- `natural_conversation`: 0.0.10 → 0.0.11
+- `openai_realtime`: 0.0.10 → 0.0.11
+- `vision`: 0.0.10 → 0.0.11
+- `voice`: 0.0.9 → 0.0.10
+
+## [2025-08-06]
 
 ### Changed
 

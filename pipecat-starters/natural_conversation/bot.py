@@ -479,7 +479,7 @@ async def run_bot(transport: BaseTransport):
         await task.queue_frames([context_aggregator.user().get_context_frame()])
 
     @transport.event_handler("on_client_disconnected")
-    async def on_client_disconnected(transport, participant, reason):
+    async def on_client_disconnected(transport, participant):
         logger.info("Client disconnected: {}", participant)
         await task.cancel()
 
