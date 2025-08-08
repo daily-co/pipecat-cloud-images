@@ -8,8 +8,8 @@ dependencies = []
 
 [dependency-groups]
 dev = [
-    "pipecatcloud>=0.2.0",
-    "pipecat-ai>=0.0.77",
+    "pipecatcloud>=0.2.1",
+    "pipecat-ai>=0.0.79",
     "pre-commit~=4.2.0",
     "ruff~=0.12.1",
     "python-dotenv>=1.0.1,<2.0.0"
