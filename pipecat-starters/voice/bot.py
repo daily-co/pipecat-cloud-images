@@ -25,7 +25,7 @@ from pipecat.transports.services.daily import DailyParams, DailyTransport
 load_dotenv(override=True)
 
 
-async def run_bot(transport: BaseTransport):
+async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     """Run your bot with the provided transport.
 
     Args:
@@ -106,7 +106,7 @@ async def run_bot(transport: BaseTransport):
         logger.info("Client disconnected: {}", participant)
         await task.cancel()
 
-    runner = PipelineRunner(handle_sigint=False, force_gc=True)
+    runner = PipelineRunner(handle_sigint=runner_args.handle_sigint, force_gc=True)
 
     await runner.run(task)
 
@@ -140,7 +140,7 @@ async def bot(runner_args: RunnerArguments):
         return
 
     try:
-        await run_bot(transport)
+        await run_bot(transport, runner_args)
         logger.info("Bot process completed")
     except Exception as e:
         logger.exception(f"Error in bot process: {str(e)}")
