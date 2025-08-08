@@ -5,7 +5,15 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.0.9] - TBD
+## [0.0.10] - TBD
+
+### Added
+
+- Added the `handle_sigint` session arg to `PipecatSessionArguments`,
+  `DailySessionArguments`, and `WebSocketSessionArguments`. The value defaults
+  to `False` for each option.
+
+## [0.0.9] - 2025-07-08
 
 ### Added
 
