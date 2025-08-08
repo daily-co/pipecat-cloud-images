@@ -96,6 +96,7 @@ async def run_bot(transport: BaseTransport):
         await task.cancel()
 
     runner = PipelineRunner(handle_sigint=False, force_gc=True)
+
     await runner.run(task)
 
 
@@ -129,7 +130,7 @@ async def bot(runner_args: RunnerArguments):
         logger.error(f"Unsupported telephony provider: {transport_type}")
         return
 
-    # Create the FastAPI WebSocket transport
+    # Create the transport
     transport = FastAPIWebsocketTransport(
         websocket=runner_args.websocket,
         params=FastAPIWebsocketParams(
