@@ -5,6 +5,18 @@ All notable changes to the **Pipecat Cloud Starter Images** will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2025-08-20]
+
+### plivo (0.1.0)
+
+- Initial changelog entry. Added a new Plivo starter that uses the Pipecat
+  runner.
+
+### telnyx (0.1.0)
+
+- Initial changelog entry. Added a new Telnyx starter that uses the Pipecat
+  runner.
+
 ## [2025-08-18]
 
 - Updated all images to use the new Python 3.12 `pipecat-base` image. Versions
@@ -42,16 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `twilio`: 0.0.8 → 0.0.9
 - `vision`: 0.0.9 → 0.0.10
 - `voice`: 0.0.8 → 0.0.9
-
-### plivo (0.0.1)
-
-- Initial changelog entry. Added a new Plivo starter that uses the Pipecat
-  runner.
-
-### telnyx (0.0.1)
-
-- Initial changelog entry. Added a new Telnyx starter that uses the Pipecat
-  runner.
 
 ## [2025-07-22]
 
