@@ -15,6 +15,7 @@ from pipecatcloud.agent import (
     SessionArguments,
     WebSocketSessionArguments,
 )
+
 from waiting_server import Config, WaitingServer
 
 app = FastAPI()
@@ -66,13 +67,11 @@ async def handle_bot_request(
             room_url=x_daily_room_url,
             token=x_daily_room_token,
             body=body,
-            handle_sigint=False,
         )
     else:
         args = PipecatSessionArguments(
             session_id=x_daily_session_id,
             body=body,
-            handle_sigint=False,
         )
 
     await run_bot(args)
@@ -89,7 +88,6 @@ async def handle_websocket(
     args = WebSocketSessionArguments(
         session_id=x_daily_session_id,
         websocket=ws,
-        handle_sigint=False,
     )
 
     await run_bot(args)
