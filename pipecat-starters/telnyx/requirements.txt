@@ -1,0 +1,2 @@
+pipecatcloud>=0.2.1
+pipecat-ai[websocket,cartesia,openai,silero,deepgram,runner]>=0.0.79
