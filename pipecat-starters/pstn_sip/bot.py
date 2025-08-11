@@ -205,7 +205,7 @@ class DialOutHandler:
             logger.warning(f"Dial-out warning: {data}")
 
 
-async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
+async def run_bot(transport: BaseTransport, body: dict = {}):
     """Run your bot with the provided transport.
 
     Args:
@@ -218,7 +218,6 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     dialin_settings = None
     dialled_phonenum = None
     caller_phonenum = None
-    body = runner_args.body or {}
     if raw_dialin_settings := body.get("dialin_settings"):
         # these fields can capitalize the first letter
         dialled_phonenum = raw_dialin_settings.get("To") or raw_dialin_settings.get("to")
@@ -403,7 +402,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         logger.debug(f"Participant left: {participant}, reason: {reason}")
         await task.cancel()
 
-    runner = PipelineRunner(handle_sigint=runner_args.handle_sigint, force_gc=True)
+    runner = PipelineRunner(handle_sigint=False, force_gc=True)
     await runner.run(task)
 
 
@@ -436,7 +435,7 @@ async def bot(runner_args: RunnerArguments):
         return
 
     try:
-        await run_bot(transport, runner_args)
+        await run_bot(transport, runner_args.body)
         logger.info("Bot process completed")
     except Exception as e:
         logger.exception(f"Error in bot process: {str(e)}")
