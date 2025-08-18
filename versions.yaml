@@ -1,17 +1,17 @@
 base:
-  version: '0.0.9'
+  version: '0.1.0'
   python_versions:
     - '3.10'
     - '3.11'
     - '3.12'
     - '3.13'
-  default_python: '3.10'
+  default_python: '3.12'
 
 starters:
-  gemini_multimodal_live: '0.0.11'
-  natural_conversation: '0.0.11'
-  openai_realtime: '0.0.11'
-  pstn_sip: '0.0.9'
-  twilio: '0.0.9'
-  vision: '0.0.11'
-  voice: '0.0.10'
+  gemini_multimodal_live: '0.1.0'
+  natural_conversation: '0.1.0'
+  openai_realtime: '0.1.0'
+  pstn_sip: '0.1.0'
+  twilio: '0.1.0'
+  vision: '0.1.0'
+  voice: '0.1.0'
