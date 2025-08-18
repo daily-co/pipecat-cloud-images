@@ -1,11 +1,11 @@
 base:
-  version: '0.0.9'
+  version: '0.1.0'
   python_versions:
     - '3.10'
     - '3.11'
     - '3.12'
     - '3.13'
-  default_python: '3.10'
+  default_python: '3.12'
 
 starters:
   gemini_multimodal_live: '0.0.11'
