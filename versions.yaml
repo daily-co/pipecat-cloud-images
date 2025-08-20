@@ -8,6 +8,7 @@ base:
   default_python: '3.12'
 
 starters:
+  exotel: '0.1.0'
   gemini_multimodal_live: '0.1.0'
   natural_conversation: '0.1.0'
   openai_realtime: '0.1.0'
