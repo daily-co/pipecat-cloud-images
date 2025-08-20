@@ -74,38 +74,7 @@ To connect this agent to Plivo:
 
    You'll use this information in the next step.
 
-3. Set up an XML server to respond to Plivo webhooks. Create a file called `server.py`:
-
-   ```python
-   from fastapi import FastAPI, Query, HTTPException
-   from starlette.responses import Response
-   import uvicorn
-
-   app = FastAPI(title="Plivo XML Server")
-
-   @app.get("/plivo-xml")
-   async def plivo_xml(
-       agent: str = Query(..., description="Agent name"),
-       org: str = Query(..., description="Organization name"),
-       CallUUID: str = Query(None, description="Plivo call UUID"),
-       From: str = Query(None, description="Caller's phone number"),
-       To: str = Query(None, description="Called phone number"),
-   ):
-       if not agent or not org:
-           raise HTTPException(status_code=400, detail="Both 'agent' and 'org' parameters are required")
-
-       xml = f"""<?xml version="1.0" encoding="UTF-8"?>
-   <Response>
-     <Stream bidirectional="true" keepCallAlive="true" contentType="audio/x-mulaw;rate=8000">
-       wss://api.pipecat.daily.co/ws/plivo?serviceHost={agent}.{org}
-     </Stream>
-   </Response>"""
-
-       return Response(content=xml, media_type="application/xml")
-
-   if __name__ == "__main__":
-       uvicorn.run(app, host="0.0.0.0", port=7860)
-   ```
+3. Set up an XML server to respond to Plivo webhooks. See the provided example at [server.py](server.py).
 
 4. Run your XML server and make it publicly accessible:
 
