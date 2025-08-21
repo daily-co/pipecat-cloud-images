@@ -205,37 +205,17 @@ class DialOutHandler:
             logger.warning(f"Dial-out warning: {data}")
 
 
-async def run_bot(transport: BaseTransport, body: dict = {}):
+async def run_bot(
+    transport: BaseTransport,
+    body: dict = {},
+    dialin_settings: dict = None,
+    dialout_settings: dict = None,
+):
     """Run your bot with the provided transport.
 
     Args:
         transport (BaseTransport): The transport to use for communication.
     """
-    # Dial-in configuration:
-    # dialin_settings are received when a call is triggered to
-    # Daily via pinless_dialin. This can be a phone number on Daily or a
-    # sip interconnect from Twilio or Telnyx.
-    dialin_settings = None
-    dialled_phonenum = None
-    caller_phonenum = None
-    if raw_dialin_settings := body.get("dialin_settings"):
-        # these fields can capitalize the first letter
-        dialled_phonenum = raw_dialin_settings.get("To") or raw_dialin_settings.get("to")
-        caller_phonenum = raw_dialin_settings.get("From") or raw_dialin_settings.get("from")
-        dialin_settings = {
-            # these fields can be received as snake_case or camelCase.
-            "call_id": raw_dialin_settings.get("callId") or raw_dialin_settings.get("call_id"),
-            "call_domain": raw_dialin_settings.get("callDomain")
-            or raw_dialin_settings.get("call_domain"),
-        }
-        logger.debug(
-            f"Dialin settings: To: {dialled_phonenum}, From: {caller_phonenum}, dialin_settings: {dialin_settings}"
-        )
-
-    # Dial-out configuration
-    dialout_settings = body.get("dialout_settings")
-    logger.debug(f"Dialout settings: {dialout_settings}")
-
     # Voicemail detection configuration
     voicemail_detection = body.get("voicemail_detection")
     using_voicemail_detection = bool(voicemail_detection and dialout_settings)
@@ -409,6 +389,31 @@ async def run_bot(transport: BaseTransport, body: dict = {}):
 async def bot(runner_args: RunnerArguments):
     """Main bot entry point compatible with Pipecat Cloud."""
 
+    # Dial-in configuration:
+    # dialin_settings are received when a call is triggered to
+    # Daily via pinless_dialin. This can be a phone number on Daily or a
+    # sip interconnect from Twilio or Telnyx.
+    dialin_settings = None
+    dialled_phonenum = None
+    caller_phonenum = None
+    if raw_dialin_settings := runner_args.body.get("dialin_settings"):
+        # these fields can capitalize the first letter
+        dialled_phonenum = raw_dialin_settings.get("To") or raw_dialin_settings.get("to")
+        caller_phonenum = raw_dialin_settings.get("From") or raw_dialin_settings.get("from")
+        dialin_settings = {
+            # these fields can be received as snake_case or camelCase.
+            "call_id": raw_dialin_settings.get("callId") or raw_dialin_settings.get("call_id"),
+            "call_domain": raw_dialin_settings.get("callDomain")
+            or raw_dialin_settings.get("call_domain"),
+        }
+        logger.debug(
+            f"Dialin settings: To: {dialled_phonenum}, From: {caller_phonenum}, dialin_settings: {dialin_settings}"
+        )
+
+    # Dial-out configuration
+    dialout_settings = runner_args.body.get("dialout_settings")
+    logger.debug(f"Dialout settings: {dialout_settings}")
+
     transport = None
 
     if os.environ.get("ENV") != "local":
@@ -423,6 +428,8 @@ async def bot(runner_args: RunnerArguments):
         runner_args.token,
         "Pipecat Bot",
         params=DailyParams(
+            api_key=os.getenv("DAILY_API_KEY"),  # needed for dial-in
+            dialin_settings=dialin_settings,
             audio_in_enabled=True,
             audio_in_filter=krisp_filter,
             audio_out_enabled=True,
@@ -435,7 +442,7 @@ async def bot(runner_args: RunnerArguments):
         return
 
     try:
-        await run_bot(transport, runner_args.body)
+        await run_bot(transport, runner_args.body, dialin_settings, dialout_settings)
         logger.info("Bot process completed")
     except Exception as e:
         logger.exception(f"Error in bot process: {str(e)}")

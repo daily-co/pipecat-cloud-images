@@ -5,6 +5,14 @@ All notable changes to the **Pipecat Cloud Starter Images** will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2025-08-21]
+
+### `pstn_sip` (0.1.1)
+
+#### Fixed
+
+- Fixed an issue where the dial-in settings were not correctly configured.
+
 ## [2025-08-20]
 
 ### plivo (0.1.0)
