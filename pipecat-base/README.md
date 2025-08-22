@@ -15,16 +15,14 @@ This image provides the foundational runtime environment for running agents on P
 
 We provide base images for multiple Python versions. See `versions.yaml` for the current list of supported versions.
 
-Currently supported Python versions:
+**Supported Python versions:** 3.10, 3.11, **3.12 (default/recommended)**, 3.13
 
-- Python 3.10: `dailyco/pipecat-base:latest-py3.10` or `dailyco/pipecat-base:latest` (default)
-  - Versioned: `dailyco/pipecat-base:0.0.9-py3.10` or `dailyco/pipecat-base:0.0.9`
-- Python 3.11: `dailyco/pipecat-base:latest-py3.11`
-  - Versioned: `dailyco/pipecat-base:0.0.9-py3.11`
-- Python 3.12: `dailyco/pipecat-base:latest-py3.12`
-  - Versioned: `dailyco/pipecat-base:0.0.9-py3.12`
-- Python 3.13: `dailyco/pipecat-base:latest-py3.13`
-  - Versioned: `dailyco/pipecat-base:0.0.9-py3.13`
+**Image naming patterns:**
+
+- `dailyco/pipecat-base:latest` - Latest version with Python 3.12 (recommended)
+- `dailyco/pipecat-base:latest-py3.X` - Latest version with specific Python version
+- `dailyco/pipecat-base:VERSION` - Pinned version with Python 3.12 (recommended for production)
+- `dailyco/pipecat-base:VERSION-py3.X` - Pinned version with specific Python version
 
 ## Usage
 
@@ -49,11 +47,11 @@ COPY ./bot.py bot.py
 For production use, we recommend pinning to specific versions:
 
 ```Dockerfile
-# Recommended: Pin to specific version and Python version
-FROM dailyco/pipecat-base:0.0.9-py3.11
+# Recommended: Pin to specific version (uses Python 3.12)
+FROM dailyco/pipecat-base:VERSION
 
-# Also acceptable: Pin to version, use default Python (e.g. 3.10)
-FROM dailyco/pipecat-base:0.0.9
+# Or specify both version and Python version explicitly
+FROM dailyco/pipecat-base:VERSION-py3.12
 ```
 
 ### Requirements
@@ -85,6 +83,38 @@ When using this base image, your project must:
 2. When Pipecat Cloud receives a request to start your agent, it calls the appropriate endpoint
 3. The base image invokes your `bot()` function, passing room details and config
 4. Your agent code runs in its own process, managed by the platform
+
+## Releasing New Versions
+
+To release a new version of the base image:
+
+1. **Bump the version** (from the `pipecat-base` directory):
+
+   ```bash
+   cd pipecat-base
+   uv version --bump patch --no-sync    # For bug fixes (0.1.1 → 0.1.2)
+   uv version --bump minor --no-sync    # For new features (0.1.1 → 0.2.0)
+   uv version --bump major --no-sync    # For breaking changes (0.1.1 → 1.0.0)
+   ```
+
+2. **Update the lock file**:
+
+   ```bash
+   uv lock
+   ```
+
+3. **Update the changelog**: Move `[Unreleased]` section to `[X.Y.Z] - YYYY-MM-DD` in `CHANGELOG.md`
+
+4. **Create release PR**:
+
+   ```bash
+   git checkout -b release/vX.Y.Z
+   git add pyproject.toml uv.lock CHANGELOG.md
+   git commit -m "Release vX.Y.Z"
+   git push origin release/vX.Y.Z
+   ```
+
+   Then open a PR from `release/vX.Y.Z` to `main`. After approval and merge, GitHub Actions will automatically build and publish the new version.
 
 ## More Information
 

@@ -5,6 +5,19 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2025-08-22
+
+### Changed
+
+- Migrated from `pip` to `uv` for dependency management, providing faster
+  builds and more reliable dependency resolution.
+
+- Updated base image to a `uv` native version. Updated from `python:3.12-slim`
+  to `ghcr.io/astral-sh/uv:python3.12-trixie-slim`.
+
+- Dependencies now installed in virtual environment (`/app/.venv`) for
+  optimized Docker layer caching.
+
 ## [0.1.0] - 2025-08-18
 
 ### Changed
