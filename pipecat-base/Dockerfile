@@ -1,4 +1,4 @@
-ARG PYTHON_VERSION=3.10
+ARG PYTHON_VERSION=3.12
 FROM python:${PYTHON_VERSION}-slim
 WORKDIR /app
 RUN apt update && apt install -y libopenblas-dev libresample1 libresample-dev && apt clean
