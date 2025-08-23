@@ -1,11 +1,12 @@
+import asyncio
+import logging
+import socket
+import time
+from pathlib import Path
+from typing import List, Optional
+
 import uvicorn
 import uvicorn.server
-from typing import List, Optional
-import socket
-import logging
-import time
-import asyncio
-from pathlib import Path
 
 
 class Config(uvicorn.Config):

@@ -19,12 +19,12 @@ jobs:
 
       - id: get-versions
         run: |
-          BASE_VERSION=$(yq '.base.version' versions.yaml)
+          BASE_VERSION=$(yq '.project.version' pipecat-base/pyproject.toml)
           PYTHON_VERSIONS=$(yq '.base.python_versions | @json' versions.yaml)
           DEFAULT_PYTHON=$(yq '.base.default_python' versions.yaml)
 
           if ! [[ $BASE_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid base version format in versions.yaml"
+            echo "Invalid base version format in pipecat-base/pyproject.toml"
             exit 1
           fi
 

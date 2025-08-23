@@ -1,5 +1,4 @@
 base:
-  version: '0.1.0'
   python_versions:
     - '3.10'
     - '3.11'
@@ -8,12 +7,12 @@ base:
   default_python: '3.12'
 
 starters:
-  gemini_multimodal_live: '0.1.0'
-  natural_conversation: '0.1.0'
-  openai_realtime: '0.1.0'
-  plivo: '0.1.0'
-  pstn_sip: '0.1.1'
-  telnyx: '0.1.0'
-  twilio: '0.1.0'
-  vision: '0.1.0'
-  voice: '0.1.0'
+  gemini_multimodal_live: '0.1.1'
+  natural_conversation: '0.1.1'
+  openai_realtime: '0.1.1'
+  plivo: '0.1.1'
+  pstn_sip: '0.1.2'
+  telnyx: '0.1.1'
+  twilio: '0.1.1'
+  vision: '0.1.1'
+  voice: '0.1.1'

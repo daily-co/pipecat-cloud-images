@@ -15,7 +15,6 @@ from pipecatcloud.agent import (
     SessionArguments,
     WebSocketSessionArguments,
 )
-
 from waiting_server import Config, WaitingServer
 
 app = FastAPI()

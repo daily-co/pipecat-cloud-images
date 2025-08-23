@@ -1,0 +1,17 @@
+[project]
+name = "pipecat-base"
+version = "0.1.1"
+description = "Pipecat Cloud Base Image"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi[standard]~=0.115.0",
+    "loguru~=0.7.3",
+    "pipecatcloud",
+]
+
+[tool.uv]
+dev-dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
