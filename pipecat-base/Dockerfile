@@ -8,10 +8,6 @@ WORKDIR /app
 # Install system dependencies
 RUN apt update && apt install -y libopenblas-dev libresample1 libresample-dev && apt clean
 
-# Set up Krisp symlink
-RUN PYTHON_SITE_PACKAGES=$(python -c "import site; print(site.getsitepackages()[0])") && \
-    ln -s /krisp/python/pipecat_ai_krisp ${PYTHON_SITE_PACKAGES}/pipecat_ai_krisp
-
 # Enable bytecode compilation
 ENV UV_COMPILE_BYTECODE=1
 
@@ -23,6 +19,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --locked --no-install-project --no-dev
+
+# Set up Krisp symlink in the virtual environment's site-packages
+RUN VENV_SITE_PACKAGES=$(/app/.venv/bin/python -c "import site; print(site.getsitepackages()[0])") && \
+    ln -s /krisp/python/pipecat_ai_krisp ${VENV_SITE_PACKAGES}/pipecat_ai_krisp
 
 # Copy application files
 COPY ./app.py ./waiting_server.py /app/
