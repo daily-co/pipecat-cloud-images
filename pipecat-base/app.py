@@ -8,6 +8,7 @@ from typing import Annotated
 from bot import bot
 from fastapi import FastAPI, Header, WebSocket
 from fastapi.websockets import WebSocketState
+from pipecatcloud_system import app
 from loguru import logger
 from pipecatcloud.agent import (
     DailySessionArguments,
@@ -17,7 +18,6 @@ from pipecatcloud.agent import (
 )
 from waiting_server import Config, WaitingServer
 
-app = FastAPI()
 server_config = Config(
     environ.get("SHUTDOWN_TIMEOUT", 7200),
     app,
