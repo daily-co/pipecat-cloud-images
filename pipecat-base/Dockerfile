@@ -25,7 +25,7 @@ RUN VENV_SITE_PACKAGES=$(/app/.venv/bin/python -c "import site; print(site.getsi
     ln -s /krisp/python/pipecat_ai_krisp ${VENV_SITE_PACKAGES}/pipecat_ai_krisp
 
 # Copy application files
-COPY ./app.py ./waiting_server.py /app/
+COPY ./app.py ./waiting_server.py ./pipecatcloud_system.py /app/
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
