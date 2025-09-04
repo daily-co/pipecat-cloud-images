@@ -5,6 +5,13 @@ All notable changes to the **Pipecat Cloud Starter Images** will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2025-09-04]
+
+### exotel (0.1.0)
+
+- Initial changelog entry. Added a new Exotel starter that uses the Pipecat
+  runner.
+
 ## [2025-08-22]
 
 - Updated all images to use the updated Python 3.12 `pipecat-base` image.
