@@ -8,7 +8,6 @@ from typing import Annotated
 from bot import bot
 from fastapi import FastAPI, Header, WebSocket
 from fastapi.websockets import WebSocketState
-from pipecatcloud_system import app
 from loguru import logger
 from pipecatcloud.agent import (
     DailySessionArguments,
@@ -16,6 +15,7 @@ from pipecatcloud.agent import (
     SessionArguments,
     WebSocketSessionArguments,
 )
+from pipecatcloud_system import app
 from waiting_server import Config, WaitingServer
 
 server_config = Config(
@@ -51,6 +51,7 @@ async def run_bot(args: SessionArguments):
             await bot(args)
         except Exception as e:
             logger.error(f"Exception running bot(): {e}")
+        logger.info(f"Stopping bot session with metadata: {json.dumps(metadata)}")
 
 
 @app.post("/bot")
