@@ -1,12 +1,14 @@
 #!/usr/bin/env python
 
+import asyncio
 import json
 import sys
+from multiprocessing import Process
 from os import environ
 from typing import Annotated
 
 from bot import bot
-from fastapi import FastAPI, Header, WebSocket
+from fastapi import Header, WebSocket
 from fastapi.websockets import WebSocketState
 from loguru import logger
 from pipecatcloud.agent import (
@@ -38,12 +40,18 @@ logger.configure(extra={"session_id": "NONE"})
 
 image_version = environ.get("IMAGE_VERSION", "unknown")
 
+spawn_process = environ.get("PIPECAT_CLOUD_SPAWN_PROCESS", False)
 
-async def run_bot(args: SessionArguments):
-    metadata = {
+
+def get_bot_metadata(args: SessionArguments):
+    return {
         "session_id": args.session_id,
         "image_version": image_version,
     }
+
+
+async def run_bot(args: SessionArguments):
+    metadata = get_bot_metadata(args)
 
     with logger.contextualize(session_id=args.session_id):
         logger.info(f"Starting bot session with metadata: {json.dumps(metadata)}")
@@ -52,6 +60,24 @@ async def run_bot(args: SessionArguments):
         except Exception as e:
             logger.error(f"Exception running bot(): {e}")
         logger.info(f"Stopping bot session with metadata: {json.dumps(metadata)}")
+
+
+def run_bot_process(args: SessionArguments):
+    asyncio.run(run_bot(args))
+
+
+async def launch_bot_process(args: SessionArguments):
+    metadata = get_bot_metadata(args)
+
+    logger.info(f"Launching bot process with metadata: {json.dumps(metadata)}")
+
+    process = Process(target=run_bot_process, args=(args,))
+    process.start()
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, process.join)
+
+    logger.info(f"Finishing bot process with metadata: {json.dumps(metadata)}")
 
 
 @app.post("/bot")
@@ -74,7 +100,10 @@ async def handle_bot_request(
             body=body,
         )
 
-    await run_bot(args)
+    if spawn_process:
+        await launch_bot_process(args)
+    else:
+        await run_bot(args)
 
     return {}
 
