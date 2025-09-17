@@ -94,12 +94,6 @@ async def run_bot(transport: BaseTransport):
         logger.debug("Client ready event received")
         await rtvi.set_bot_ready()
 
-    @transport.event_handler("on_recording_started")
-    async def on_recording_started(transport, status):
-        logger.debug("Recording started: {}", status)
-        await transport.on_recording_started(status)
-        await rtvi.set_bot_ready()
-
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("Client connected.")
