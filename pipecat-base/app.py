@@ -6,13 +6,15 @@ from os import environ
 from typing import Annotated
 
 from bot import bot
-from fastapi import FastAPI, Header, WebSocket
+from fastapi import BackgroundTasks, Header, WebSocket
 from fastapi.websockets import WebSocketState
 from loguru import logger
+from pipecat.transports.smallwebrtc.connection import IceServer
 from pipecatcloud.agent import (
     DailySessionArguments,
     PipecatSessionArguments,
     SessionArguments,
+    SmallWebRTCSessionArguments,
     WebSocketSessionArguments,
 )
 from pipecatcloud_system import app
@@ -96,6 +98,58 @@ async def handle_websocket(
         await ws.close()
 
 
+# ------------------------------------------------------------
+# Optional: SmallWebRTC route only if pipecat is available
+# ------------------------------------------------------------
+try:
+    from pipecat.transports.smallwebrtc.request_handler import (
+        ConnectionMode,
+        SmallWebRTCRequest,
+        SmallWebRTCRequestHandler,
+    )
+
+    ice_servers = [
+        IceServer(
+            urls="stun:stun.l.google.com:19302",
+        )
+    ]
+    small_webrtc_handler = SmallWebRTCRequestHandler(
+        connection_mode=ConnectionMode.SINGLE, ice_servers=ice_servers
+    )
+
+    @app.post("/api/offer")
+    async def offer(
+        request: SmallWebRTCRequest,
+        background_tasks: BackgroundTasks,
+        x_daily_session_id: Annotated[str | None, Header()] = None,
+    ):
+        """Handle WebRTC offer requests via SmallWebRTCRequestHandler."""
+
+        async def webrtc_connection_callback(connection):
+            runner_args = SmallWebRTCSessionArguments(
+                session_id=x_daily_session_id, webrtc_connection=connection
+            )
+            background_tasks.add_task(run_bot, runner_args)
+
+        # Delegate handling to SmallWebRTCRequestHandler
+        answer = await small_webrtc_handler.handle_web_request(
+            request=request,
+            webrtc_connection_callback=webrtc_connection_callback,
+        )
+        return answer
+
+    logger.info("pipecat-ai available: WebRTC route enabled.")
+
+except ImportError:
+    ConnectionMode = None
+    SmallWebRTCRequest = None
+    SmallWebRTCRequestHandler = None
+    logger.warning("pipecat-ai not available: WebRTC route disabled.")
+
+
+# ------------------------------------------------------------
+# Entrypoint
+# ------------------------------------------------------------
 if __name__ == "__main__":
     try:
         server.run()
