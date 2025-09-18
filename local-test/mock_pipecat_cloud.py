@@ -62,6 +62,7 @@ async def call_bot_and_store(agent_name: str, session_id: str, body: dict):
                 raise HTTPException(status_code=500, detail="Failed to start bot")
             await resp.json()
             print(f"Bot with session_id {session_id} has finished executing")
+            del active_sessions[session_id]
 
 
 @app.post("/v1/public/{agent_name}/start")
@@ -97,6 +98,7 @@ async def proxy_request(agent_name: str, session_id: str, path: str, request: Re
     target_url = f"http://{active_session['pod_ip_address']}:{active_session['pod_ip_port']}/{path}"
 
     headers = dict(request.headers)
+    headers["x-daily-session-id"] = session_id
     body = await request.body()
 
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
