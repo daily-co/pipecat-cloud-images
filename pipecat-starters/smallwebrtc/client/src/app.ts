@@ -174,19 +174,23 @@ class WebRTCApp {
       headers.append("Authorization", `Bearer ${this.apiKey}`);
       const startBotResult = await this.pcClient.startBot({
           endpoint: this.startUrl,
-          headers: headers
+          headers: headers,
+          requestData: {
+              createDailyRoom: false
+          }
       })
       console.log("startBotResult", startBotResult)
       // @ts-ignore
-      const session_id = startBotResult?.session_id;
-      if (!session_id) {
+      const sessionId = startBotResult?.sessionId;
+      if (!sessionId) {
         throw new Error("session_id not found in startBotResult")
       }
 
       this.updateStatus('Connecting');
-      const offerUrl = `${this.baseUrl}/v1/public/${this.agentName}/sessions/${session_id}/api/offer`
+      const offerUrl = `${this.baseUrl}/v1/public/${this.agentName}/sessions/${sessionId}/api/offer`
       const webrtcRequestParams: APIRequest = {
         endpoint: offerUrl,
+        headers: headers
       }
       console.log("webrtcRequestParams", webrtcRequestParams)
       await this.pcClient.connect({webrtcRequestParams});

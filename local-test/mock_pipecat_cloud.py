@@ -80,7 +80,7 @@ async def start_agent(agent_name: str, request: Request, background_tasks: Backg
     # Schedule bot execution in the background
     background_tasks.add_task(call_bot_and_store, agent_name, session_id, body)
 
-    return {"session_id": session_id}
+    return {"sessionId": session_id}
 
 
 @app.api_route(
