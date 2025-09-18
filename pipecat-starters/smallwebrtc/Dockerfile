@@ -20,7 +20,7 @@ COPY ./pipecatcloud-0.2.4.tar.gz pipecatcloud-0.2.4.tar.gz
 RUN pip install ./pipecatcloud-0.2.4.tar.gz
 COPY ./pipecat_ai-0.0.86.dev38.tar.gz pipecat_ai-0.0.86.dev38.tar.gz
 RUN pip install ./pipecat_ai-0.0.86.dev38.tar.gz
-COPY ./.env .env
+# COPY ./.env .env
 # --------- end of local development
 
 COPY ./bot.py bot.py
