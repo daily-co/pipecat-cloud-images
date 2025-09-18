@@ -20,6 +20,7 @@ from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
+from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecatcloud import PipecatSessionArguments, SmallWebRTCSessionManager
 from pipecatcloud.agent import SmallWebRTCSessionArguments
@@ -30,11 +31,12 @@ load_dotenv(override=True)
 session_manager = SmallWebRTCSessionManager(timeout_seconds=120)
 
 
-async def run_bot(transport: BaseTransport):
+async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     """Run your bot with the provided transport.
 
     Args:
         transport (BaseTransport): The transport to use for communication.
+        runner_args: runner session arguments
     """
     # Configure your STT, LLM, and TTS services here
     # Swap out different processors or properties to customize your bot
@@ -105,7 +107,7 @@ async def run_bot(transport: BaseTransport):
         logger.info("Client disconnected: {}", participant)
         await task.cancel()
 
-    runner = PipelineRunner(handle_sigint=False, force_gc=True)
+    runner = PipelineRunner(handle_sigint=runner_args.handle_sigint)
 
     await runner.run(task)
 
@@ -126,36 +128,38 @@ async def bot(runner_args: RunnerArguments):
         logger.info("Received the webrtc_connection from Pipecat Cloud, will start the pipeline")
         session_manager.cancel_timeout()
 
-    transport = None
-
-    if os.environ.get("ENV") != "local":
-        from pipecat.audio.filters.krisp_filter import KrispFilter
-
-        krisp_filter = KrispFilter()
-    else:
-        krisp_filter = None
-
-    transport = SmallWebRTCTransport(
-        webrtc_connection=runner_args.webrtc_connection,
-        params=TransportParams(
-            audio_in_enabled=True,
-            audio_in_filter=krisp_filter,
-            audio_out_enabled=True,
-            vad_analyzer=SileroVADAnalyzer(),
-        ),
-    )
-
-    if transport is None:
-        logger.error("Failed to create transport")
-        return
-
+    webrtc_connection: SmallWebRTCConnection = runner_args.webrtc_connection
     try:
-        await run_bot(transport)
+        if os.environ.get("ENV") != "local":
+            from pipecat.audio.filters.krisp_filter import KrispFilter
+
+            krisp_filter = KrispFilter()
+        else:
+            krisp_filter = None
+
+        transport = SmallWebRTCTransport(
+            webrtc_connection=webrtc_connection,
+            params=TransportParams(
+                audio_in_enabled=True,
+                audio_in_filter=krisp_filter,
+                audio_out_enabled=True,
+                vad_analyzer=SileroVADAnalyzer(),
+            ),
+        )
+
+        if transport is None:
+            logger.error("Failed to create transport")
+            return
+
+        await run_bot(transport, runner_args)
         logger.info("Bot process completed")
     except Exception as e:
         logger.exception(f"Error in bot process: {str(e)}")
         raise
     finally:
+        logger.info("Cleaning up SmallWebRTC resources")
+        if webrtc_connection:
+            await webrtc_connection.disconnect()
         session_manager.complete_session()
 
 
