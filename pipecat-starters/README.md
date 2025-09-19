@@ -1,5 +1,28 @@
 # Pipecat Cloud Starters
 
+> **⚠️ DEPRECATION NOTICE**
+>
+> **The pipecat-starters in this repository are deprecated and will be removed in the near future.** These starter templates are redundant with examples available elsewhere and will no longer be maintained or updated.
+>
+> **Migration Path:**
+>
+> **Specific Alternatives:**
+>
+> - **General quickstart**: [pipecat-quickstart](https://github.com/pipecat-ai/pipecat-quickstart)
+> - **Twilio**: [twilio-chatbot example](https://github.com/pipecat-ai/pipecat-examples/tree/main/twilio-chatbot)
+> - **Telnyx**: [telnyx-chatbot example](https://github.com/pipecat-ai/pipecat-examples/tree/main/telnyx-chatbot)
+> - **Plivo**: [plivo-chatbot example](https://github.com/pipecat-ai/pipecat-examples/tree/main/plivo-chatbot)
+> - **Exotel**: [exotel-chatbot example](https://github.com/pipecat-ai/pipecat-examples/tree/main/exotel-chatbot)
+> - **Daily PSTN**: [phone-chatbot example](https://github.com/pipecat-ai/pipecat-examples/tree/main/phone-chatbot)
+>
+> **Additional Resources:**
+>
+> - [Pipecat Documentation](https://docs.pipecat.ai)
+> - [Pipecat Cloud Documentation](https://docs.pipecat.ai/deployment/pipecat-cloud/introduction)
+> - Existing Docker images will remain available on Docker Hub but will not receive updates
+>
+> **Timeline:** These starters will be removed from this repository after October 15, 2025.
+
 This repository contains starter templates for building AI agents using the Pipecat framework and deploying them to Pipecat Cloud.
 
 ## Available Starters
@@ -28,7 +51,7 @@ Each starter contains:
 
 ### Building and Deploying
 
-For detailed instructions on building, deploying, and running your agent, please refer to the [Pipecat Cloud documentation](https://docs.pipecat.daily.co/quickstart).
+For detailed instructions on building, deploying, and running your agent, please refer to the [Pipecat documentation](https://docs.pipecat.ai/getting-started/quickstart).
 
 1. **Choose a starter**: Navigate to the starter that best fits your use case
 
@@ -73,8 +96,8 @@ pcc secrets set my-secrets \
 
 For more information on the Pipecat framework and Pipecat Cloud:
 
-- [Pipecat Cloud Documentation](https://docs.pipecat.daily.co)
-- [Pipecat Framework Documentation](https://docs.pipecat.ai)
+- [Pipecat Cloud Documentation](https://docs.pipecat.ai/deployment/pipecat-cloud/introduction)
+- [Pipecat Documentation](https://docs.pipecat.ai)
 
 ## License
 

@@ -60,3 +60,4 @@ GTAGS
 TAGS
 venv/
 .venv
+.env

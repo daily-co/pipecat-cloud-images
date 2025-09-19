@@ -1,5 +1,7 @@
 # Voice Bot Starter
 
+> **⚠️ DEPRECATED**: This starter is deprecated and will be removed after October 15, 2025. For current examples, see the [pipecat-quickstart](https://github.com/pipecat-ai/pipecat-quickstart) repository and [Pipecat Documentation](https://docs.pipecat.ai).
+
 A voice-based conversational agent built with Pipecat.
 
 ## Features

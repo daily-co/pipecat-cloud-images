@@ -1,5 +1,7 @@
 # Plivo Voice Bot Starter
 
+> **⚠️ DEPRECATED**: This starter is deprecated and will be removed after October 15, 2025. For current examples, see the [plivo-chatbot example](https://github.com/pipecat-ai/pipecat-examples/tree/main/plivo-chatbot) and [Pipecat Documentation](https://docs.pipecat.ai).
+
 A telephone-based conversational agent built with Pipecat that connects to Plivo for voice calls.
 
 ## Features

@@ -1,5 +1,7 @@
 # Gemini Multimodal Live Bot Starter
 
+> **⚠️ DEPRECATED**: This starter is deprecated and will be removed after October 15, 2025. For current examples, see the [pipecat-quickstart](https://github.com/pipecat-ai/pipecat-quickstart) repository and [Pipecat Documentation](https://docs.pipecat.ai).
+
 This repository contains a starter template for building a voice-based AI agent using Pipecat and deploying it to Pipecat Cloud.
 
 ## Features

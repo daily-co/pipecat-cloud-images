@@ -1,5 +1,9 @@
 # Natural Conversation Bot Starter
 
+> **⚠️ DEPRECATED**: This starter is deprecated and will be removed after October 15, 2025. For current examples, see the [pipecat-quickstart](https://github.com/pipecat-ai/pipecat-quickstart) repository and [Pipecat Documentation](https://docs.pipecat.ai).
+
+> Seperately, this approach to interruption handling is no longer recommended. Use [Pipecat's smart-turn V3 model](https://www.daily.co/blog/announcing-smart-turn-v3-with-cpu-inference-in-just-12ms/) instead.
+
 This repository contains a starter template for building a voice-based AI agent with natural conversation capabilities using Pipecat and deploying it to Pipecat Cloud.
 
 ## Features

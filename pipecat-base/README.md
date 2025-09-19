@@ -120,5 +120,5 @@ To release a new version of the base image:
 
 For detailed documentation on agent development:
 
-- [Agent Images Guide](https://docs.pipecat.daily.co/agents/agent-images)
-- [Custom Base Image](https://docs.pipecat.daily.co/agents/agent-images#using-a-custom-image)
+- [Agent Images Guide](https://docs.pipecat.ai/deployment/pipecat-cloud/fundamentals/agent-images)
+- [Custom Base Image](https://docs.pipecat.ai/deployment/pipecat-cloud/fundamentals/agent-images#using-a-custom-image)

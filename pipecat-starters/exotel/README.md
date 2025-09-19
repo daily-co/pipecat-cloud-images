@@ -1,5 +1,7 @@
 # Exotel Voice Bot Starter
 
+> **⚠️ DEPRECATED**: This starter is deprecated and will be removed after October 15, 2025. For current examples, see the [exotel-chatbot example](https://github.com/pipecat-ai/pipecat-examples/tree/main/exotel-chatbot) and [Pipecat Documentation](https://docs.pipecat.ai).
+
 A telephone-based conversational agent built with Pipecat that connects to Exotel for voice calls.
 
 ## Features
