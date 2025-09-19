@@ -5,6 +5,17 @@ All notable changes to the **Pipecat Cloud Starter Images** will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2025-09-19] - FINAL RELEASE
+
+### Deprecated
+
+- **ALL STARTERS**: All pipecat-starters in this repository are now deprecated and will be removed after October 15, 2025.
+- These starter templates are redundant with examples available in the main Pipecat documentation
+- Docker images will remain available on Docker Hub but will no longer receive updates or maintenance
+- Users should migrate to examples and tutorials available at:
+  - [Pipecat Documentation](https://docs.pipecat.ai)
+  - [Pipecat Cloud Documentation](https://docs.pipecat.ai/deployment/pipecat-cloud/introduction)
+
 ## [2025-09-04]
 
 ### exotel (0.1.0)

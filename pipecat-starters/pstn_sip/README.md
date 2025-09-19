@@ -1,8 +1,8 @@
 # Voice Bot Starter
 
-A phone-based conversational agent built with Pipecat.
-This starter bot enables you to create phone bots that can handle both
-inbound and outbound calls via PSTN (regular phone numbers) and SIP.
+> **⚠️ DEPRECATED**: This starter is deprecated and will be removed after October 15, 2025. For current examples, see the [phone-chatbot example](https://github.com/pipecat-ai/pipecat-examples/tree/main/phone-chatbot) and [Pipecat Documentation](https://docs.pipecat.ai).
+
+A phone-based conversational agent built with Pipecat. This starter bot enables you to create phone bots that can handle both inbound and outbound calls via PSTN (regular phone numbers) and SIP.
 
 ## Features
 
@@ -56,16 +56,11 @@ The API will return a static SIP URI (`sip_uri`) that can be called from other S
 
 ### Handling dial-in webhook (`room_creation_api`)
 
-To make and receive calls currently you have to host a server that
-handles incoming calls. In the coming weeks, incoming calls will be
-directly handled within Daily and we will expose an endpoint similar
-to `{service}/start` that will manage this for you.
+To make and receive calls currently you have to host a server that handles incoming calls. In the coming weeks, incoming calls will be directly handled within Daily and we will expose an endpoint similar to `{service}/start` that will manage this for you.
 
-In the mean time, you will need to pass the custom fields to
-[{service}/start](https://docs.pipecat.daily.co/agents/active-sessions#using-rest)
+In the mean time, you will need to pass the custom fields to [{service}/start](https://docs.pipecat.ai/deployment/pipecat-cloud/rest-reference/endpoint/start) using the `body` request parameter.
 
-For handling PSTN/SIP within this starter image, we recommend sending
-the following custom values:
+For handling PSTN/SIP within this starter image, we recommend sending the following custom values:
 
 ```python
 # Pass the values that you received in the pinless webhook to {service}/start
@@ -92,9 +87,7 @@ the following custom values:
 
 ### Dial-in setup (receiving calls on the bot)
 
-When a user calls your purchased phone number, the call is received by the Daily
-infrastructure and put on hold. This triggers a webhook to your `room_creation_api`,
-which should then call the Pipecat Cloud endpoint with the necessary data:
+When a user calls your purchased phone number, the call is received by the Daily infrastructure and put on hold. This triggers a webhook to your `room_creation_api`, which should then call the Pipecat Cloud endpoint with the necessary data:
 
 ```bash
 curl --request POST \
@@ -118,9 +111,7 @@ curl --request POST \
 }
 ```
 
-The forwards the incoming request to bot, it passes the contents of the
-`dialin_settings` to the `DailyTransport`. The PSTN or SIP call is then automatically
-forwarded to the bot.
+The forwards the incoming request to bot, it passes the contents of the `dialin_settings` to the `DailyTransport`. The PSTN or SIP call is then automatically forwarded to the bot.
 
 The call flow looks like this:
 

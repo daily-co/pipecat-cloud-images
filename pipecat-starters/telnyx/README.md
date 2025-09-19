@@ -1,5 +1,7 @@
 # Telnyx Voice Bot Starter
 
+> **⚠️ DEPRECATED**: This starter is deprecated and will be removed after October 15, 2025. For current examples, see the [telnyx-chatbot example](https://github.com/pipecat-ai/pipecat-examples/tree/main/telnyx-chatbot) and [Pipecat Documentation](https://docs.pipecat.ai).
+
 A telephone-based conversational agent built with Pipecat that connects to Telnyx for voice calls.
 
 ## Features
