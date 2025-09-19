@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 
+import base64
 import json
 import sys
 from os import environ
 from typing import Annotated
 
 from bot import bot
-from fastapi import FastAPI, Header, WebSocket
+from fastapi import Header, Query, WebSocket
 from fastapi.websockets import WebSocketState
 from loguru import logger
 from pipecatcloud.agent import (
@@ -81,13 +82,26 @@ async def handle_bot_request(
 
 @app.websocket("/ws")
 async def handle_websocket(
-    ws: WebSocket, x_daily_session_id: Annotated[str | None, Header()] = None
+    ws: WebSocket,
+    x_daily_session_id: Annotated[str | None, Header()] = None,
+    body: str = Query(None),
 ):
     await ws.accept()
+
+    decoded_body = None
+    if body:
+        try:
+            # Decode base64 and parse as JSON to a dict
+            decoded_bytes = base64.b64decode(body)
+            decoded_string = decoded_bytes.decode("utf-8")
+            decoded_body = json.loads(decoded_string)
+        except (base64.binascii.Error, UnicodeDecodeError, json.JSONDecodeError) as e:
+            logger.error(f"Failed to decode body parameter: {e}")
 
     args = WebSocketSessionArguments(
         session_id=x_daily_session_id,
         websocket=ws,
+        body=decoded_body,
     )
 
     await run_bot(args)
