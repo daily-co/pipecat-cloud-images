@@ -6,7 +6,7 @@ from os import environ
 from typing import Annotated
 
 from bot import bot
-from fastapi import BackgroundTasks, Header, WebSocket
+from fastapi import BackgroundTasks, Header, HTTPException, WebSocket
 from fastapi.websockets import WebSocketState
 from loguru import logger
 from pipecat.transports.smallwebrtc.connection import IceServer
@@ -17,7 +17,7 @@ from pipecatcloud.agent import (
     SmallWebRTCSessionArguments,
     WebSocketSessionArguments,
 )
-from pipecatcloud_system import app
+from pipecatcloud_system import app, get_whatsapp_client
 from waiting_server import Config, WaitingServer
 
 server_config = Config(
@@ -145,6 +145,74 @@ except ImportError:
     SmallWebRTCRequest = None
     SmallWebRTCRequestHandler = None
     logger.warning("pipecat-ai not available: WebRTC route disabled.")
+
+
+# ------------------------------------------------------------
+# Optional: WhatsApp routes only if pipecat is available
+# ------------------------------------------------------------
+try:
+    from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+    from pipecat.transports.whatsapp.api import WhatsAppWebhookRequest
+
+    @app.post(
+        "/whatsapp",
+        summary="Handle WhatsApp webhook events",
+        description="Processes incoming WhatsApp messages and call events",
+    )
+    async def whatsapp_webhook(
+        body: WhatsAppWebhookRequest,
+        background_tasks: BackgroundTasks,
+        x_daily_session_id: Annotated[str | None, Header()] = None,
+    ):
+        """Handle incoming WhatsApp webhook events.
+
+        For call events, establishes WebRTC connections and spawns bot instances
+        in the background to handle real-time communication.
+
+        Args:
+            x_daily_session_id: Header parameter containing session ID
+            body: Parsed WhatsApp webhook request body
+            background_tasks: FastAPI background tasks manager
+
+        Returns:
+            dict: Success response with processing status
+
+        Raises:
+            HTTPException:
+                400 for invalid request format or object type
+                500 for internal processing errors
+        """
+        # Validate webhook object type
+        if body.object != "whatsapp_business_account":
+            logger.warning(f"Invalid webhook object type: {body.object}")
+            raise HTTPException(status_code=400, detail="Invalid object type")
+
+        logger.debug(f"Processing WhatsApp webhook: {body}")
+
+        async def connection_callback(connection: SmallWebRTCConnection):
+            runner_args = SmallWebRTCSessionArguments(
+                session_id=x_daily_session_id, webrtc_connection=connection
+            )
+            background_tasks.add_task(run_bot, runner_args)
+
+        try:
+            # Process the webhook request
+            result = await get_whatsapp_client().handle_webhook_request(body, connection_callback)
+            logger.debug(f"Webhook processed successfully: {result}")
+            return {"status": "success", "message": "Webhook processed successfully"}
+        except ValueError as ve:
+            logger.warning(f"Invalid webhook request format: {ve}")
+            raise HTTPException(status_code=400, detail=f"Invalid request: {str(ve)}")
+        except Exception as e:
+            logger.error(f"Internal error processing webhook: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error processing webhook")
+
+    logger.info("pipecat-ai available: WhatsApp route enabled.")
+
+except ImportError:
+    WhatsAppWebhookRequest = None
+    WhatsAppClient = None
+    logger.warning("pipecat-ai not available or using old version: WhatsApp route disabled.")
 
 
 # ------------------------------------------------------------
