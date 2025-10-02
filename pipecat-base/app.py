@@ -4,16 +4,18 @@ import base64
 import json
 import sys
 from os import environ
-from typing import Annotated
+from typing import Annotated, List, Optional
 
+import aiohttp
 from bot import bot
-from fastapi import Header, Query, WebSocket
+from fastapi import BackgroundTasks, Header, HTTPException, Query, WebSocket
 from fastapi.websockets import WebSocketState
 from loguru import logger
 from pipecatcloud.agent import (
     DailySessionArguments,
     PipecatSessionArguments,
     SessionArguments,
+    SmallWebRTCSessionArguments,
     WebSocketSessionArguments,
 )
 from pipecatcloud_system import app
@@ -110,6 +112,111 @@ async def handle_websocket(
         await ws.close()
 
 
+# ------------------------------------------------------------
+# Optional: SmallWebRTC route only if pipecat is available
+# ------------------------------------------------------------
+try:
+    from pipecat.transports.smallwebrtc.connection import IceServer
+    from pipecat.transports.smallwebrtc.request_handler import (
+        ConnectionMode,
+        SmallWebRTCRequest,
+        SmallWebRTCRequestHandler,
+    )
+
+    ESP32_ENABLED = environ.get("ESP32_ENABLED", "False").lower() == "true"
+    ESP32_HOST = environ.get("ESP32_HOST", None)
+    ICE_CONFIG_URL = environ.get("ICE_CONFIG_URL", "http://localhost:9090/ice-servers")
+
+    logger.debug(f"ESP32_ENABLED: {ESP32_ENABLED}")
+    small_webrtc_handler = SmallWebRTCRequestHandler(
+        connection_mode=ConnectionMode.SINGLE,
+        esp32_mode=ESP32_ENABLED,
+        host=ESP32_HOST,
+    )
+
+    async def get_ice_config() -> Optional[List[IceServer]]:
+        """
+        Retrieves ICE configuration from the configured endpoint.
+
+        Returns:
+            Optional[List[IceServer]]: Optional list containing ice_servers
+        """
+
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+                async with session.request(
+                    "GET",
+                    ICE_CONFIG_URL,
+                    headers=None,
+                    data=None,
+                ) as resp:
+                    if resp.status != 200:
+                        raise HTTPException(
+                            status_code=500, detail="Failed to fetch ICE configuration."
+                        )
+
+                    response_body = await resp.read()
+                    data = json.loads(response_body.decode("utf-8"))
+
+                    ice_config_data = data.get("iceConfig", {})
+                    ice_servers_data = ice_config_data.get("iceServers", [])
+
+                    ice_servers = []
+                    for server_data in ice_servers_data:
+                        ice_server = IceServer(
+                            urls=server_data.get("urls", []),
+                            username=server_data.get("username", ""),
+                            credential=server_data.get("credential", ""),
+                        )
+                        ice_servers.append(ice_server)
+
+                    return ice_servers
+
+        except Exception as e:
+            logger.error(f"Failed to fetch ICE configuration from {ICE_CONFIG_URL}: {e}")
+            return [
+                IceServer(
+                    urls="stun:stun.l.google.com:19302",
+                )
+            ]
+
+    @app.post("/api/offer")
+    async def offer(
+        request: SmallWebRTCRequest,
+        background_tasks: BackgroundTasks,
+        x_daily_session_id: Annotated[str | None, Header()] = None,
+    ):
+        """Handle WebRTC offer requests via SmallWebRTCRequestHandler."""
+        # Updating the ice servers
+        ice_servers = await get_ice_config()
+        small_webrtc_handler._ice_servers = ice_servers
+
+        async def webrtc_connection_callback(connection):
+            runner_args = SmallWebRTCSessionArguments(
+                session_id=x_daily_session_id, webrtc_connection=connection
+            )
+            background_tasks.add_task(run_bot, runner_args)
+
+        # Delegate handling to SmallWebRTCRequestHandler
+        answer = await small_webrtc_handler.handle_web_request(
+            request=request,
+            webrtc_connection_callback=webrtc_connection_callback,
+        )
+        return answer
+
+    logger.info("pipecat-ai available: WebRTC route enabled.")
+
+except ImportError:
+    ConnectionMode = None
+    SmallWebRTCRequest = None
+    SmallWebRTCRequestHandler = None
+    IceServer = None
+    logger.warning("pipecat-ai not available: WebRTC route disabled.")
+
+
+# ------------------------------------------------------------
+# Entrypoint
+# ------------------------------------------------------------
 if __name__ == "__main__":
     try:
         server.run()
