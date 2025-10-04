@@ -11,23 +11,9 @@ from bot import bot
 from fastapi import BackgroundTasks, Header, HTTPException, Query, WebSocket
 from fastapi.websockets import WebSocketState
 from loguru import logger
-from pipecatcloud.agent import (
-    DailySessionArguments,
-    PipecatSessionArguments,
-    SessionArguments,
-    WebSocketSessionArguments,
-)
+from pipecatcloud.agent import SessionArguments
 from pipecatcloud_system import app
 from waiting_server import Config, WaitingServer
-
-try:
-    from pipecatcloud.agent import SmallWebRTCSessionArguments
-
-    SMALL_WEBRTC_AVAILABLE = True
-    logger.info("SmallWebRTCSessionArguments available.")
-except ImportError:
-    SMALL_WEBRTC_AVAILABLE = False
-    logger.warning("SmallWebRTCSessionArguments not available. Requires pipecatcloud>=0.2.5.")
 
 server_config = Config(
     environ.get("SHUTDOWN_TIMEOUT", 7200),
@@ -72,6 +58,16 @@ async def handle_bot_request(
     x_daily_room_token: Annotated[str | None, Header()] = None,
     x_daily_session_id: Annotated[str | None, Header()] = None,
 ):
+    """Handle bot requests for Daily or Pipecat transports."""
+    try:
+        from pipecatcloud.agent import DailySessionArguments, PipecatSessionArguments
+    except ImportError as e:
+        logger.error(f"Failed to import session arguments: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Transport dependencies not available.",
+        )
+
     if x_daily_room_url and x_daily_room_token:
         args = DailySessionArguments(
             session_id=x_daily_session_id,
@@ -96,6 +92,14 @@ async def handle_websocket(
     x_daily_session_id: Annotated[str | None, Header()] = None,
     body: str = Query(None),
 ):
+    """Handle WebSocket connections."""
+    try:
+        from pipecatcloud.agent import WebSocketSessionArguments
+    except ImportError as e:
+        logger.error(f"Failed to import WebSocketSessionArguments: {e}")
+        await ws.close(code=1011, reason="WebSocket transport not available")
+        return
+
     await ws.accept()
 
     decoded_body = None
@@ -121,9 +125,26 @@ async def handle_websocket(
 
 
 # ------------------------------------------------------------
-# Optional: SmallWebRTC route only if pipecat is available
+# SmallWebRTC route
 # ------------------------------------------------------------
-if SMALL_WEBRTC_AVAILABLE:
+@app.post("/api/offer")
+async def offer(
+    request: dict,
+    background_tasks: BackgroundTasks,
+    x_daily_session_id: Annotated[str | None, Header()] = None,
+):
+    """Handle WebRTC offer requests via SmallWebRTCRequestHandler."""
+    try:
+        from pipecatcloud.agent import SmallWebRTCSessionArguments
+    except ImportError as e:
+        logger.error(
+            f"SmallWebRTCSessionArguments not available. Requires pipecatcloud>=0.2.5. Error: {e}"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="SmallWebRTC not supported. Requires pipecatcloud>=0.2.5.",
+        )
+
     try:
         from pipecat.transports.smallwebrtc.connection import IceServer
         from pipecat.transports.smallwebrtc.request_handler import (
@@ -131,98 +152,94 @@ if SMALL_WEBRTC_AVAILABLE:
             SmallWebRTCRequest,
             SmallWebRTCRequestHandler,
         )
-
-        ESP32_ENABLED = environ.get("ESP32_ENABLED", "False").lower() == "true"
-        ESP32_HOST = environ.get("ESP32_HOST", None)
-        ICE_CONFIG_URL = environ.get("ICE_CONFIG_URL", "http://localhost:9090/ice-servers")
-
-        logger.debug(f"ESP32_ENABLED: {ESP32_ENABLED}")
-        small_webrtc_handler = SmallWebRTCRequestHandler(
-            connection_mode=ConnectionMode.SINGLE,
-            esp32_mode=ESP32_ENABLED,
-            host=ESP32_HOST,
+    except (ImportError, Exception) as e:
+        logger.error(
+            f"WebRTC dependencies not available. Install pipecat-ai[webrtc] to use this endpoint. Error: {e}"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="WebRTC support not available. Missing pipecat-ai[webrtc] dependencies.",
         )
 
-        async def get_ice_config() -> Optional[List[IceServer]]:
-            """
-            Retrieves ICE configuration from the configured endpoint.
+    # Initialize config
+    ESP32_ENABLED = environ.get("ESP32_ENABLED", "False").lower() == "true"
+    ESP32_HOST = environ.get("ESP32_HOST", None)
+    ICE_CONFIG_URL = environ.get("ICE_CONFIG_URL", "http://localhost:9090/ice-servers")
 
-            Returns:
-                Optional[List[IceServer]]: Optional list containing ice_servers
-            """
+    logger.debug(f"ESP32_ENABLED: {ESP32_ENABLED}")
 
-            try:
-                async with aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=60)
-                ) as session:
-                    async with session.request(
-                        "GET",
-                        ICE_CONFIG_URL,
-                        headers=None,
-                        data=None,
-                    ) as resp:
-                        if resp.status != 200:
-                            raise HTTPException(
-                                status_code=500, detail="Failed to fetch ICE configuration."
-                            )
+    async def get_ice_config() -> Optional[List[IceServer]]:
+        """
+        Retrieves ICE configuration from the configured endpoint.
 
-                        response_body = await resp.read()
-                        data = json.loads(response_body.decode("utf-8"))
+        Returns:
+            Optional[List[IceServer]]: Optional list containing ice_servers
+        """
 
-                        ice_config_data = data.get("iceConfig", {})
-                        ice_servers_data = ice_config_data.get("iceServers", [])
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+                async with session.request(
+                    "GET",
+                    ICE_CONFIG_URL,
+                    headers=None,
+                    data=None,
+                ) as resp:
+                    if resp.status != 200:
+                        raise HTTPException(
+                            status_code=500, detail="Failed to fetch ICE configuration."
+                        )
 
-                        ice_servers = []
-                        for server_data in ice_servers_data:
-                            ice_server = IceServer(
-                                urls=server_data.get("urls", []),
-                                username=server_data.get("username", ""),
-                                credential=server_data.get("credential", ""),
-                            )
-                            ice_servers.append(ice_server)
+                    response_body = await resp.read()
+                    data = json.loads(response_body.decode("utf-8"))
 
-                        return ice_servers
+                    ice_config_data = data.get("iceConfig", {})
+                    ice_servers_data = ice_config_data.get("iceServers", [])
 
-            except Exception as e:
-                logger.error(f"Failed to fetch ICE configuration from {ICE_CONFIG_URL}: {e}")
-                return [
-                    IceServer(
-                        urls="stun:stun.l.google.com:19302",
-                    )
-                ]
+                    ice_servers = []
+                    for server_data in ice_servers_data:
+                        ice_server = IceServer(
+                            urls=server_data.get("urls", []),
+                            username=server_data.get("username", ""),
+                            credential=server_data.get("credential", ""),
+                        )
+                        ice_servers.append(ice_server)
 
-        @app.post("/api/offer")
-        async def offer(
-            request: SmallWebRTCRequest,
-            background_tasks: BackgroundTasks,
-            x_daily_session_id: Annotated[str | None, Header()] = None,
-        ):
-            """Handle WebRTC offer requests via SmallWebRTCRequestHandler."""
-            # Updating the ice servers
-            ice_servers = await get_ice_config()
-            small_webrtc_handler._ice_servers = ice_servers
+                    return ice_servers
 
-            async def webrtc_connection_callback(connection):
-                runner_args = SmallWebRTCSessionArguments(
-                    session_id=x_daily_session_id, webrtc_connection=connection
+        except Exception as e:
+            logger.error(f"Failed to fetch ICE configuration from {ICE_CONFIG_URL}: {e}")
+            return [
+                IceServer(
+                    urls="stun:stun.l.google.com:19302",
                 )
-                background_tasks.add_task(run_bot, runner_args)
+            ]
 
-            # Delegate handling to SmallWebRTCRequestHandler
-            answer = await small_webrtc_handler.handle_web_request(
-                request=request,
-                webrtc_connection_callback=webrtc_connection_callback,
-            )
-            return answer
+    # Get ICE configuration
+    ice_servers = await get_ice_config()
 
-        logger.info("pipecat-ai available: WebRTC route enabled.")
+    # Initialize handler
+    small_webrtc_handler = SmallWebRTCRequestHandler(
+        connection_mode=ConnectionMode.SINGLE,
+        esp32_mode=ESP32_ENABLED,
+        host=ESP32_HOST,
+        ice_servers=ice_servers,
+    )
 
-    except ImportError:
-        ConnectionMode = None
-        SmallWebRTCRequest = None
-        SmallWebRTCRequestHandler = None
-        IceServer = None
-        logger.warning("pipecat-ai not available: WebRTC route disabled.")
+    # Parse request
+    webrtc_request = SmallWebRTCRequest(**request)
+
+    async def webrtc_connection_callback(connection):
+        runner_args = SmallWebRTCSessionArguments(
+            session_id=x_daily_session_id, webrtc_connection=connection
+        )
+        background_tasks.add_task(run_bot, runner_args)
+
+    # Delegate handling to SmallWebRTCRequestHandler
+    answer = await small_webrtc_handler.handle_web_request(
+        request=webrtc_request,
+        webrtc_connection_callback=webrtc_connection_callback,
+    )
+    return answer
 
 
 # ------------------------------------------------------------
