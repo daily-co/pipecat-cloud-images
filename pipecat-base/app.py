@@ -223,6 +223,9 @@ if SMALL_WEBRTC_AVAILABLE:
         SmallWebRTCRequestHandler = None
         IceServer = None
         logger.warning("pipecat-ai not available: WebRTC route disabled.")
+    # If we have an internal import issue inside Pipecat, it will be raised as an Exception rather than an ImportError.
+    except Exception as e:
+        logger.warning(f"pipecat-ai initialization failed: WebRTC route disabled. Error: {e}")
 
 
 # ------------------------------------------------------------
