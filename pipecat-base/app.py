@@ -24,9 +24,7 @@ from waiting_server import Config, WaitingServer
 
 try:
     from pipecatcloud.agent import SmallWebRTCSessionArguments
-
     SMALL_WEBRTC_AVAILABLE = True
-    logger.info("SmallWebRTCSessionArguments available.")
 except ImportError:
     SMALL_WEBRTC_AVAILABLE = False
     logger.warning("SmallWebRTCSessionArguments not available. Requires pipecatcloud>=0.2.5.")
@@ -127,6 +125,9 @@ async def handle_websocket(
 # ------------------------------------------------------------
 if SMALL_WEBRTC_AVAILABLE:
     try:
+        # We import it here so that if aiortc is not installed, we catch the ImportError now,
+        # preventing an error from showing up in the console later.
+        from aiortc import MediaStreamTrack
         from pipecat.transports.smallwebrtc.connection import IceServer, SmallWebRTCConnection
         from pipecat.transports.smallwebrtc.request_handler import (
             ConnectionMode,
@@ -362,22 +363,22 @@ if SMALL_WEBRTC_AVAILABLE:
         except ImportError:
             WhatsAppWebhookRequest = None
             WhatsAppClient = None
-            logger.warning(
+            logger.debug(
                 "pipecat-ai not available or using old version: WhatsApp route disabled."
             )
         # If we have an internal import issue inside Pipecat, it will be raised as an Exception rather than an ImportError.
         except Exception as e:
-            logger.warning(f"pipecat-ai initialization failed: WhatsApp route disabled. Error: {e}")
+            logger.debug(f"pipecat-ai initialization failed: WhatsApp route disabled. Error: {e}")
 
     except ImportError:
         ConnectionMode = None
         SmallWebRTCRequest = None
         SmallWebRTCRequestHandler = None
         IceServer = None
-        logger.warning("pipecat-ai not available: WebRTC route disabled.")
+        logger.debug("SmallWebRTC requires pipecat-ai[webrtc]. WebRTC route disabled.")
     # If we have an internal import issue inside Pipecat, it will be raised as an Exception rather than an ImportError.
     except Exception as e:
-        logger.warning(f"pipecat-ai initialization failed: WebRTC route disabled. Error: {e}")
+        logger.debug(f"pipecat-ai initialization failed: WebRTC route disabled. Error: {e}")
 
 # ------------------------------------------------------------
 # Entrypoint
