@@ -1,6 +1,6 @@
 [project]
 name = "pipecat-base"
-version = "0.1.5"
+version = "0.1.6"
 description = "Pipecat Cloud Base Image"
 requires-python = ">=3.10"
 dependencies = [

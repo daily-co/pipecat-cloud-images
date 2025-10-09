@@ -1,14 +1,16 @@
 #!/usr/bin/env python
 
 import base64
+import inspect
 import json
 import sys
+from contextlib import asynccontextmanager
 from os import environ
 from typing import Annotated, List, Optional
 
 import aiohttp
 from bot import bot
-from fastapi import BackgroundTasks, Header, HTTPException, Query, WebSocket
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request, WebSocket
 from fastapi.websockets import WebSocketState
 from loguru import logger
 from pipecatcloud.agent import (
@@ -17,14 +19,12 @@ from pipecatcloud.agent import (
     SessionArguments,
     WebSocketSessionArguments,
 )
-from pipecatcloud_system import app
+from pipecatcloud_system import add_lifespan_to_app, app
 from waiting_server import Config, WaitingServer
 
 try:
     from pipecatcloud.agent import SmallWebRTCSessionArguments
-
     SMALL_WEBRTC_AVAILABLE = True
-    logger.info("SmallWebRTCSessionArguments available.")
 except ImportError:
     SMALL_WEBRTC_AVAILABLE = False
     logger.warning("SmallWebRTCSessionArguments not available. Requires pipecatcloud>=0.2.5.")
@@ -125,7 +125,10 @@ async def handle_websocket(
 # ------------------------------------------------------------
 if SMALL_WEBRTC_AVAILABLE:
     try:
-        from pipecat.transports.smallwebrtc.connection import IceServer
+        # We import it here so that if aiortc is not installed, we catch the ImportError now,
+        # preventing an error from showing up in the console later.
+        from aiortc import MediaStreamTrack
+        from pipecat.transports.smallwebrtc.connection import IceServer, SmallWebRTCConnection
         from pipecat.transports.smallwebrtc.request_handler import (
             ConnectionMode,
             SmallWebRTCRequest,
@@ -215,18 +218,167 @@ if SMALL_WEBRTC_AVAILABLE:
             )
             return answer
 
-        logger.info("pipecat-ai available: WebRTC route enabled.")
+        logger.info("WebRTC route enabled.")
+
+        # ------------------------------------------------------------
+        # Optional: WhatsApp routes only if pipecat is available
+        # ------------------------------------------------------------
+        try:
+            from pipecat.transports.whatsapp.api import WhatsAppWebhookRequest
+            from pipecat.transports.whatsapp.client import WhatsAppClient
+
+            WHATSAPP_TOKEN = environ.get("WHATSAPP_TOKEN")
+            WHATSAPP_PHONE_NUMBER_ID = environ.get("WHATSAPP_PHONE_NUMBER_ID")
+            WHATSAPP_APP_SECRET = environ.get("WHATSAPP_APP_SECRET")
+
+            if not all(
+                [
+                    WHATSAPP_TOKEN,
+                    WHATSAPP_PHONE_NUMBER_ID,
+                    WHATSAPP_APP_SECRET,
+                ]
+            ):
+                logger.debug(
+                    "Missing required environment variables for WhatsApp. Keeping it disabled."
+                )
+                raise Exception(
+                    f"Missing one of these secrets: WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID or WHATSAPP_APP_SECRET."
+                )
+
+            def ensure_whatsapp_accepts_secret():
+                signature = inspect.signature(WhatsAppClient)
+                if "whatsapp_secret" not in signature.parameters:
+                    logger.debug("WhatsApp requires pipecat-ai>=0.0.89")
+                    raise Exception(f"WhatsApp requires pipecat-ai>=0.0.89.")
+
+            # Ensure that we are using a Pipecat version which supports all we need
+            ensure_whatsapp_accepts_secret()
+
+            # Global WhatsApp client instance
+            whatsapp_client: Optional[WhatsAppClient] = None
+
+            @asynccontextmanager
+            async def whatsapp_lifespan(app: FastAPI):
+                """Manage application lifespan and WhatsApp client resources."""
+                global whatsapp_client
+                async with aiohttp.ClientSession() as session:
+                    # Initialize WhatsApp client if available and credentials are provided
+                    if WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID:
+                        whatsapp_client = WhatsAppClient(
+                            whatsapp_token=WHATSAPP_TOKEN,
+                            phone_number_id=WHATSAPP_PHONE_NUMBER_ID,
+                            whatsapp_secret=WHATSAPP_APP_SECRET,
+                            session=session,
+                        )
+                        logger.info("WhatsApp client initialized successfully")
+                    else:
+                        logger.warning(
+                            "WhatsApp credentials not found - WhatsApp client not initialized"
+                        )
+
+                    try:
+                        yield  # Run the application
+                    finally:
+                        # Cleanup WhatsApp client resources
+                        if whatsapp_client:
+                            logger.info("Cleaning up WhatsApp client resources...")
+                            try:
+                                await whatsapp_client.terminate_all_calls()
+                                logger.info("WhatsApp client cleanup completed")
+                            except Exception as e:
+                                logger.error(f"Error during WhatsApp client cleanup: {e}")
+
+            # Add the WhatsApp lifespan to the app
+            add_lifespan_to_app(whatsapp_lifespan)
+
+            @app.post(
+                "/whatsapp",
+                summary="Handle WhatsApp webhook events",
+                description="Processes incoming WhatsApp messages and call events",
+            )
+            async def whatsapp_webhook(
+                body: WhatsAppWebhookRequest,
+                background_tasks: BackgroundTasks,
+                request: Request,
+                x_hub_signature_256: str = Header(None),
+                x_daily_session_id: Annotated[str | None, Header()] = None,
+            ):
+                """Handle incoming WhatsApp webhook events.
+
+                For call events, establishes WebRTC connections and spawns bot instances
+                in the background to handle real-time communication.
+
+                Args:
+                    x_daily_session_id: Header parameter containing session ID
+                    body: Parsed WhatsApp webhook request body
+                    background_tasks: FastAPI background tasks manager
+
+                Returns:
+                    dict: Success response with processing status
+
+                Raises:
+                    HTTPException:
+                        400 for invalid request format or object type
+                        500 for internal processing errors
+                """
+                # Validate webhook object type
+                if body.object != "whatsapp_business_account":
+                    logger.warning(f"Invalid webhook object type: {body.object}")
+                    raise HTTPException(status_code=400, detail="Invalid object type")
+
+                logger.debug(f"Processing WhatsApp webhook: {body}")
+
+                async def connection_callback(connection: SmallWebRTCConnection):
+                    runner_args = SmallWebRTCSessionArguments(
+                        session_id=x_daily_session_id, webrtc_connection=connection
+                    )
+                    background_tasks.add_task(run_bot, runner_args)
+
+                try:
+                    # Updating the ice servers
+                    ice_servers = await get_ice_config()
+                    whatsapp_client._ice_servers = ice_servers
+
+                    # Process the webhook request
+                    raw_body = await request.body()
+                    result = await whatsapp_client.handle_webhook_request(
+                        body,
+                        connection_callback,
+                        sha256_signature=x_hub_signature_256,
+                        raw_body=raw_body,
+                    )
+                    logger.debug(f"Webhook processed successfully: {result}")
+                    return {"status": "success", "message": "Webhook processed successfully"}
+                except ValueError as ve:
+                    logger.warning(f"Invalid webhook request format: {ve}")
+                    raise HTTPException(status_code=400, detail=f"Invalid request: {str(ve)}")
+                except Exception as e:
+                    logger.error(f"Internal error processing webhook: {e}")
+                    raise HTTPException(
+                        status_code=500, detail="Internal server error processing webhook"
+                    )
+
+            logger.info("WhatsApp route enabled.")
+
+        except ImportError:
+            WhatsAppWebhookRequest = None
+            WhatsAppClient = None
+            logger.debug(
+                "pipecat-ai not available or using old version: WhatsApp route disabled."
+            )
+        # If we have an internal import issue inside Pipecat, it will be raised as an Exception rather than an ImportError.
+        except Exception as e:
+            logger.debug(f"pipecat-ai initialization failed: WhatsApp route disabled. Error: {e}")
 
     except ImportError:
         ConnectionMode = None
         SmallWebRTCRequest = None
         SmallWebRTCRequestHandler = None
         IceServer = None
-        logger.warning("pipecat-ai not available: WebRTC route disabled.")
+        logger.debug("SmallWebRTC requires pipecat-ai[webrtc]. WebRTC route disabled.")
     # If we have an internal import issue inside Pipecat, it will be raised as an Exception rather than an ImportError.
     except Exception as e:
-        logger.warning(f"pipecat-ai initialization failed: WebRTC route disabled. Error: {e}")
-
+        logger.debug(f"pipecat-ai initialization failed: WebRTC route disabled. Error: {e}")
 
 # ------------------------------------------------------------
 # Entrypoint
