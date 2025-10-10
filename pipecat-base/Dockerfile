@@ -22,7 +22,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Set up Krisp symlink in the virtual environment's site-packages
 RUN VENV_SITE_PACKAGES=$(/app/.venv/bin/python -c "import site; print(site.getsitepackages()[0])") && \
-    ln -s /krisp/python/pipecat_ai_krisp ${VENV_SITE_PACKAGES}/pipecat_ai_krisp
+    ln -s /krisp/python/pipecat_ai_krisp ${VENV_SITE_PACKAGES}/pipecat_ai_krisp && \
+    echo "/opt/krisp_viva/krisp_audio" > ${VENV_SITE_PACKAGES}/krisp_viva.pth
 
 # Copy application files
 COPY ./app.py ./waiting_server.py ./pipecatcloud_system.py /app/
