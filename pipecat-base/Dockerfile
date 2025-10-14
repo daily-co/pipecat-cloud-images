@@ -6,7 +6,7 @@ FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-trixie-slim
 WORKDIR /app
 
 # Install system dependencies
-RUN apt update && apt install -y libopenblas-dev libresample1 libresample-dev && apt clean
+RUN apt update && apt install -y libopenblas-dev libresample1 libresample-dev libgl1 libglib2.0-0 && apt clean
 
 # Enable bytecode compilation
 ENV UV_COMPILE_BYTECODE=1
