@@ -6,12 +6,12 @@ requires-python = ">=3.10"
 dependencies = [
     "fastapi[standard]~=0.115.0",
     "loguru~=0.7.3",
-    "pipecatcloud>=0.2.5",
+    "pipecatcloud>=0.2.6",
     "pip",
 ]
 
-[tool.uv]
-dev-dependencies = []
+[dependency-groups]
+dev = []
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
