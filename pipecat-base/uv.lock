@@ -671,7 +671,7 @@ wheels = [
 
 [[package]]
 name = "pipecat-base"
-version = "0.1.6"
+version = "0.1.7"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi", extra = ["standard"] },
@@ -685,7 +685,7 @@ requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = "~=0.115.0" },
     { name = "loguru", specifier = "~=0.7.3" },
     { name = "pip" },
-    { name = "pipecatcloud", specifier = ">=0.2.5" },
+    { name = "pipecatcloud", specifier = ">=0.2.6" },
 ]
 
 [package.metadata.requires-dev]
@@ -693,7 +693,7 @@ dev = []
 
 [[package]]
 name = "pipecatcloud"
-version = "0.2.5"
+version = "0.2.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -706,9 +706,9 @@ dependencies = [
     { name = "typer" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6e/0d/85bcd491bf45b5c66ca0d1ac7f3a01292ae28ed66b46105284a4221dcb54/pipecatcloud-0.2.5.tar.gz", hash = "sha256:49f87db56337ad108fd96bb61a902752244416374f39753009ebff364c838608", size = 64402, upload-time = "2025-10-02T13:03:23.534Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a0/c4/59ea7895a464c92961fc41f4ab0d879f5fe60ec601407caee31aa6901914/pipecatcloud-0.2.6.tar.gz", hash = "sha256:1b980e4317258f2fa5837652b1db65331300319758b2980259a52bb282a2f084", size = 64698, upload-time = "2025-10-09T18:34:26.488Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/92/0601ffe1611803ebf16e430c8e2c69c0c58159674a78a7f1efe8f2b8542c/pipecatcloud-0.2.5-py3-none-any.whl", hash = "sha256:e83681eb63a5eee17288e56e2857918f65ef99cd5ca9bdd8791fa1e5dddd1116", size = 50584, upload-time = "2025-10-02T13:03:22.003Z" },
+    { url = "https://files.pythonhosted.org/packages/93/2a/830890cd08f57e4e8994f8002f83f991f98582cbb28eb5196c0eda4640a0/pipecatcloud-0.2.6-py3-none-any.whl", hash = "sha256:1017180a1675526c1688e134e192ea03d6f56b4514e3fe5342fcf43c0806eb65", size = 50740, upload-time = "2025-10-09T18:34:25.396Z" },
 ]
 
 [[package]]
