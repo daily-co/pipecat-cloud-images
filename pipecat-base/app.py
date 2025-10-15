@@ -24,6 +24,7 @@ from waiting_server import Config, WaitingServer
 
 try:
     from pipecatcloud.agent import SmallWebRTCSessionArguments
+
     SMALL_WEBRTC_AVAILABLE = True
 except ImportError:
     SMALL_WEBRTC_AVAILABLE = False
@@ -218,6 +219,20 @@ if SMALL_WEBRTC_AVAILABLE:
             )
             return answer
 
+        try:
+            from pipecat.transports.smallwebrtc.request_handler import SmallWebRTCPatchRequest
+
+            @app.patch("/api/offer")
+            async def ice_candidate(request: SmallWebRTCPatchRequest):
+                """Handle WebRTC new ice candidate requests."""
+                logger.debug(f"Received patch request: {request}")
+                await small_webrtc_handler.handle_patch_request(request)
+                return {"status": "success"}
+        except ImportError:
+            SmallWebRTCPatchRequest = None
+            logger.debug("SmallWebRTCPatchRequest not available. ICE candidate route disabled.")
+            logger.debug("SmallWebRTCPatchRequest requires pipecat-ai>=0.0.91.")
+
         logger.info("WebRTC route enabled.")
 
         # ------------------------------------------------------------
@@ -363,9 +378,7 @@ if SMALL_WEBRTC_AVAILABLE:
         except ImportError:
             WhatsAppWebhookRequest = None
             WhatsAppClient = None
-            logger.debug(
-                "pipecat-ai not available or using old version: WhatsApp route disabled."
-            )
+            logger.debug("pipecat-ai not available or using old version: WhatsApp route disabled.")
         # If we have an internal import issue inside Pipecat, it will be raised as an Exception rather than an ImportError.
         except Exception as e:
             logger.debug(f"pipecat-ai initialization failed: WhatsApp route disabled. Error: {e}")
