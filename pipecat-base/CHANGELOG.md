@@ -5,6 +5,13 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2025-10-28
+
+- Refactoring how we are building the base image. We can now print a 
+  summary of the features available in the base image, but only if the 
+  environment variable `PCC_LOG_FEATURES_SUMMARY` is set to `true`.
+- Adding support for Small WebRTC trickle ice.
+
 ## [0.1.8] - 2025-10-24
 
 ### Added
