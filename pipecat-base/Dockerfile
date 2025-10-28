@@ -26,7 +26,7 @@ RUN VENV_SITE_PACKAGES=$(/app/.venv/bin/python -c "import site; print(site.getsi
     echo "/opt/krisp_viva/krisp_audio" > ${VENV_SITE_PACKAGES}/krisp_viva.pth
 
 # Copy application files
-COPY ./app.py ./waiting_server.py ./pipecatcloud_system.py /app/
+COPY ./app.py ./waiting_server.py ./pipecatcloud_system.py ./feature_manager.py /app/
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
