@@ -193,7 +193,7 @@ def setup_smallwebrtc_routes():
 
     @app.post("/api/offer")
     async def offer(
-        request: SmallWebRTCRequest,
+        req: Request,
         background_tasks: BackgroundTasks,
         x_daily_session_id: Annotated[str | None, Header()] = None,
     ):
@@ -202,9 +202,14 @@ def setup_smallwebrtc_routes():
         ice_servers = await get_ice_config()
         small_webrtc_handler._ice_servers = ice_servers
 
+        body = await req.json()
+        request = SmallWebRTCRequest.from_dict(body)
+
         async def webrtc_connection_callback(connection):
             runner_args = SmallWebRTCSessionArguments(
-                session_id=x_daily_session_id, webrtc_connection=connection
+                session_id=x_daily_session_id,
+                webrtc_connection=connection,
+                body=request.request_data,
             )
             background_tasks.add_task(run_bot, runner_args)
 
