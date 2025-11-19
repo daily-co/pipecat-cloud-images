@@ -20,6 +20,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --locked --no-install-project --no-dev
 
+# Pre-download NLTK data to avoid runtime download issues
+RUN /app/.venv/bin/python -m nltk.downloader punkt_tab -d /usr/local/share/nltk_data && \
+    /app/.venv/bin/python -c "import nltk; nltk.data.find('tokenizers/punkt_tab')"
+
 # Set up Krisp symlink in the virtual environment's site-packages
 RUN VENV_SITE_PACKAGES=$(/app/.venv/bin/python -c "import site; print(site.getsitepackages()[0])") && \
     ln -s /krisp/python/pipecat_ai_krisp ${VENV_SITE_PACKAGES}/pipecat_ai_krisp && \

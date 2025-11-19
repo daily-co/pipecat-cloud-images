@@ -5,17 +5,31 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11] - 2025-11-19
+
+### Added
+
+- Pre-download NLTK punkt_tab in the base image to ensure that the package is
+  available at runtime.
+
 ## [0.1.10] - 2025-11-17
+
+### Fixed
 
 - Fixed an issue in the `Runner` where, when using `SmallWebRTCTransport`, the
   `request_data` was not being passed to the `SmallWebRTCRunnerArguments` body.
 
 ## [0.1.9] - 2025-10-28
 
-- Refactoring how we are building the base image. We can now print a 
-  summary of the features available in the base image, but only if the 
-  environment variable `PCC_LOG_FEATURES_SUMMARY` is set to `true`.
+### Added
+
 - Adding support for Small WebRTC trickle ice.
+
+### Changed
+
+- Refactoring how we are building the base image. We can now print a
+  summary of the features available in the base image, but only if the
+  environment variable `PCC_LOG_FEATURES_SUMMARY` is set to `true`.
 
 ## [0.1.8] - 2025-10-24
 
