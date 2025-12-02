@@ -54,6 +54,7 @@ if feature_manager.is_enabled(FeatureKeys.SMALL_WEBRTC_SESSION):
 
     # Create a global session manager instance for SmallWebRTC
     session_manager = SmallWebRTCSessionManager(timeout_seconds=120)
+    pipecat_session_body = None
 
 
 async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
@@ -66,9 +67,11 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
         logger.info(f"Transport type: {transport_type}")
 
         if session_manager:
+            global pipecat_session_body
             if isinstance(args, PipecatSessionArguments) and transport_type == "webrtc":
                 logger.info("Will wait for the webrtc_connection to be set")
                 try:
+                    pipecat_session_body = args.body
                     await session_manager.wait_for_webrtc()
                 except TimeoutError as e:
                     logger.error(f"Timeout waiting for WebRTC connection: {e}")
@@ -79,6 +82,8 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
                     "Received the webrtc_connection from Pipecat Cloud, cancelling the timeout"
                 )
                 session_manager.cancel_timeout()
+                if not args.body:
+                    args.body = pipecat_session_body
 
         try:
             await bot(args)
