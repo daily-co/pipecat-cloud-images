@@ -64,7 +64,7 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
     }
     with logger.contextualize(session_id=args.session_id):
         logger.info(f"Starting bot session with metadata: {json.dumps(metadata)}")
-        logger.info(f"Transport type: {transport_type}")
+        logger.debug(f"Transport type: {transport_type}")
 
         if session_manager:
             global pipecat_session_body
