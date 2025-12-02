@@ -55,6 +55,10 @@ async def call_bot_and_store(agent_name: str, session_id: str, body: dict):
 
     logger.info(f"Starting bot with headers {headers}")
 
+    logger.debug(f"Body: {body}")
+    if body.get("transport"):
+        headers["x-daily-transport-type"] = body.get("transport")
+
     # Store session info immediately in memory
     active_sessions[session_id] = {
         "agent_name": agent_name,

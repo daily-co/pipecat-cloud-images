@@ -11,7 +11,7 @@ import aiohttp
 from bot import bot
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request, WebSocket
 from fastapi.websockets import WebSocketState
-from feature_manager import FeatureKeys, FeatureManager, FeatureStatus
+from feature_manager import FeatureKeys, FeatureManager
 from loguru import logger
 from pipecatcloud.agent import (
     DailySessionArguments,
@@ -49,14 +49,15 @@ logger.configure(extra={"session_id": "NONE"})
 image_version = environ.get("IMAGE_VERSION", "unknown")
 
 
-async def run_bot(args: SessionArguments):
+async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
     metadata = {
         "session_id": args.session_id,
         "image_version": image_version,
     }
-
     with logger.contextualize(session_id=args.session_id):
         logger.info(f"Starting bot session with metadata: {json.dumps(metadata)}")
+        logger.info(f"Transport type: {transport_type}")
+        # TODO: implement the logic here, if the transport_type == webrtc
         try:
             await bot(args)
         except Exception as e:
@@ -71,6 +72,7 @@ async def handle_bot_request(
     x_daily_room_url: Annotated[str | None, Header()] = None,
     x_daily_room_token: Annotated[str | None, Header()] = None,
     x_daily_session_id: Annotated[str | None, Header()] = None,
+    x_daily_transport_type: Annotated[str | None, Header()] = None,
 ):
     if x_daily_room_url and x_daily_room_token:
         args = DailySessionArguments(
@@ -85,7 +87,7 @@ async def handle_bot_request(
             body=body,
         )
 
-    await run_bot(args)
+    await run_bot(args, x_daily_transport_type)
 
     return {}
 
