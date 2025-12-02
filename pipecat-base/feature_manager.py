@@ -85,6 +85,7 @@ class FeatureManager:
         version_required = "pipecatcloud>=0.2.5"
 
         try:
+            from pipecatcloud import SmallWebRTCSessionManager
             from pipecatcloud.agent import SmallWebRTCSessionArguments
 
             self.features[feature_key] = self._create_feature_info(

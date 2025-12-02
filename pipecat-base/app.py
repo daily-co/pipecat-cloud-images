@@ -48,6 +48,13 @@ logger.configure(extra={"session_id": "NONE"})
 
 image_version = environ.get("IMAGE_VERSION", "unknown")
 
+if feature_manager.is_enabled(FeatureKeys.SMALL_WEBRTC_SESSION):
+    from pipecatcloud import SmallWebRTCSessionManager
+    from pipecatcloud.agent import SmallWebRTCSessionArguments
+
+    # Create a global session manager instance for SmallWebRTC
+    session_manager = SmallWebRTCSessionManager(timeout_seconds=120)
+
 
 async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
     metadata = {
@@ -57,12 +64,30 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
     with logger.contextualize(session_id=args.session_id):
         logger.info(f"Starting bot session with metadata: {json.dumps(metadata)}")
         logger.info(f"Transport type: {transport_type}")
-        # TODO: implement the logic here, if the transport_type == webrtc
+
+        if session_manager:
+            if isinstance(args, PipecatSessionArguments) and transport_type == "webrtc":
+                logger.info("Will wait for the webrtc_connection to be set")
+                try:
+                    await session_manager.wait_for_webrtc()
+                except TimeoutError as e:
+                    logger.error(f"Timeout waiting for WebRTC connection: {e}")
+                    raise
+                return
+            if isinstance(args, SmallWebRTCSessionArguments):
+                logger.info(
+                    "Received the webrtc_connection from Pipecat Cloud, cancelling the timeout"
+                )
+                session_manager.cancel_timeout()
+
         try:
             await bot(args)
         except Exception as e:
             logger.error(f"Exception running bot(): {e}")
-        logger.info(f"Stopping bot session with metadata: {json.dumps(metadata)}")
+        finally:
+            logger.info(f"Stopping bot session with metadata: {json.dumps(metadata)}")
+            if session_manager:
+                session_manager.complete_session()
 
 
 # Basic routes (always available)
