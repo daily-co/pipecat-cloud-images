@@ -5,15 +5,3 @@ base:
     - '3.12'
     - '3.13'
   default_python: '3.12'
-
-starters:
-  exotel: '0.1.0'
-  gemini_multimodal_live: '0.1.2'
-  natural_conversation: '0.1.2'
-  openai_realtime: '0.1.2'
-  plivo: '0.1.2'
-  pstn_sip: '0.1.3'
-  telnyx: '0.1.2'
-  twilio: '0.1.2'
-  vision: '0.1.2'
-  voice: '0.1.2'

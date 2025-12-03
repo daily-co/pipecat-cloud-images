@@ -1,2 +1,0 @@
-pipecatcloud>=0.2.1
-pipecat-ai[google,daily,silero,runner]>=0.0.79

@@ -1,2 +1,0 @@
-pipecatcloud>=0.2.1
-pipecat-ai[openai,daily,deepgram,cartesia,silero,runner]>=0.0.79
