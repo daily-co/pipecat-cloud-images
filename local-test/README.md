@@ -30,7 +30,6 @@ docker build -t pipecat-smallwebrtc:latest .
 docker run -it -p 8080:8080 pipecat-smallwebrtc
 ```
 
-> You can use it with any of the examples provided [here](../pipecat-starters).
 ---
 
 ### 2. Configure Environment Variables
