@@ -11,7 +11,7 @@ import aiohttp
 from bot import bot
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request, WebSocket
 from fastapi.websockets import WebSocketState
-from feature_manager import FeatureKeys, FeatureManager, FeatureStatus
+from feature_manager import FeatureKeys, FeatureManager
 from loguru import logger
 from pipecatcloud.agent import (
     DailySessionArguments,
@@ -21,6 +21,9 @@ from pipecatcloud.agent import (
 )
 from pipecatcloud_system import add_lifespan_to_app, app
 from waiting_server import Config, WaitingServer
+
+# Global state dictionary
+GLOBALS = {}
 
 # Initialize feature manager
 feature_manager = FeatureManager()
@@ -48,20 +51,51 @@ logger.configure(extra={"session_id": "NONE"})
 
 image_version = environ.get("IMAGE_VERSION", "unknown")
 
+if feature_manager.is_enabled(FeatureKeys.SMALL_WEBRTC_SESSION):
+    from pipecatcloud import SmallWebRTCSessionManager
+    from pipecatcloud.agent import SmallWebRTCSessionArguments
 
-async def run_bot(args: SessionArguments):
+    # Initialize session manager in the global dictionary
+    GLOBALS["session_manager"] = SmallWebRTCSessionManager(timeout_seconds=120)
+
+
+async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
     metadata = {
         "session_id": args.session_id,
         "image_version": image_version,
     }
-
     with logger.contextualize(session_id=args.session_id):
         logger.info(f"Starting bot session with metadata: {json.dumps(metadata)}")
+        logger.debug(f"Transport type: {transport_type}")
+
+        if GLOBALS["session_manager"]:
+            if isinstance(args, PipecatSessionArguments) and transport_type == "webrtc":
+                logger.info("Will wait for the webrtc_connection to be set!")
+                try:
+                    GLOBALS["pipecat_session_body"] = args.body
+                    await GLOBALS["session_manager"].wait_for_webrtc()
+                except TimeoutError as e:
+                    logger.error(f"Timeout waiting for WebRTC connection: {e}")
+                    raise
+                return
+            if isinstance(args, SmallWebRTCSessionArguments):
+                logger.info(
+                    "Received the webrtc_connection from Pipecat Cloud, cancelling the timeout"
+                )
+                GLOBALS["session_manager"].cancel_timeout()
+                if not args.body:
+                    args.body = GLOBALS["pipecat_session_body"]
+
         try:
             await bot(args)
         except Exception as e:
             logger.error(f"Exception running bot(): {e}")
-        logger.info(f"Stopping bot session with metadata: {json.dumps(metadata)}")
+        finally:
+            logger.info(f"Stopping bot session with metadata: {json.dumps(metadata)}")
+            if GLOBALS["session_manager"]:
+                GLOBALS["session_manager"].complete_session()
+                GLOBALS["session_manager"] = None
+                GLOBALS["pipecat_session_body"] = None
 
 
 # Basic routes (always available)
@@ -71,6 +105,7 @@ async def handle_bot_request(
     x_daily_room_url: Annotated[str | None, Header()] = None,
     x_daily_room_token: Annotated[str | None, Header()] = None,
     x_daily_session_id: Annotated[str | None, Header()] = None,
+    x_daily_transport_type: Annotated[str | None, Header()] = None,
 ):
     if x_daily_room_url and x_daily_room_token:
         args = DailySessionArguments(
@@ -85,7 +120,7 @@ async def handle_bot_request(
             body=body,
         )
 
-    await run_bot(args)
+    await run_bot(args, x_daily_transport_type)
 
     return {}
 

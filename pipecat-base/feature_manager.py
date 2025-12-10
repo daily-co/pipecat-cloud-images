@@ -52,10 +52,7 @@ class FeatureManager:
         ]
         for feature_key, feature_name, version_required in pipecat_features:
             self.features[feature_key] = self._create_feature_info(
-                feature_key,
-                feature_name,
-                version_required,
-                status=FeatureStatus.ENABLED
+                feature_key, feature_name, version_required, status=FeatureStatus.ENABLED
             )
 
     def _detect_features(self):
@@ -88,6 +85,7 @@ class FeatureManager:
         version_required = "pipecatcloud>=0.2.5"
 
         try:
+            from pipecatcloud import SmallWebRTCSessionManager
             from pipecatcloud.agent import SmallWebRTCSessionArguments
 
             self.features[feature_key] = self._create_feature_info(

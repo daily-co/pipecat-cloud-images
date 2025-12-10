@@ -55,6 +55,10 @@ async def call_bot_and_store(agent_name: str, session_id: str, body: dict):
 
     logger.info(f"Starting bot with headers {headers}")
 
+    logger.debug(f"Body: {body}")
+    if body.get("transport"):
+        headers["x-daily-transport-type"] = body.get("transport")
+
     # Store session info immediately in memory
     active_sessions[session_id] = {
         "agent_name": agent_name,
@@ -65,11 +69,12 @@ async def call_bot_and_store(agent_name: str, session_id: str, body: dict):
     target_host = active_sessions[session_id]["pod_ip_address"]
     target_port = active_sessions[session_id]["pod_ip_port"]
     bot_url = f"http://{target_host}:{target_port}/bot"
+    bot_body = body.get("body", {})
 
     # Long-running request to local bot server
     timeout = aiohttp.ClientTimeout(total=7200)  # 2 hours
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(bot_url, headers=headers, json=body) as resp:
+        async with session.post(bot_url, headers=headers, json=bot_body) as resp:
             if resp.status != 200:
                 raise HTTPException(status_code=500, detail="Failed to start bot")
             await resp.json()
