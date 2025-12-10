@@ -23,7 +23,12 @@ from pipecatcloud_system import add_lifespan_to_app, app
 from waiting_server import Config, WaitingServer
 
 # Global state dictionary
-GLOBALS = {}
+GLOBALS = {
+    # Store SmallWebRTCSessionManager.
+    "session_manager": None,
+    # Cache /bot request body for SmallWebRTC sessions.
+    "pipecat_session_body": None,
+}
 
 # Initialize feature manager
 feature_manager = FeatureManager()
