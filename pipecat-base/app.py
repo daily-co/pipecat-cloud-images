@@ -68,12 +68,13 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
         logger.info(f"Starting bot session with metadata: {json.dumps(metadata)}")
         logger.debug(f"Transport type: {transport_type}")
 
-        if GLOBALS["session_manager"]:
+        session_manager = GLOBALS.get("session_manager")
+        if session_manager:
             if isinstance(args, PipecatSessionArguments) and transport_type == "webrtc":
                 logger.info("Will wait for the webrtc_connection to be set!")
                 try:
                     GLOBALS["pipecat_session_body"] = args.body
-                    await GLOBALS["session_manager"].wait_for_webrtc()
+                    await session_manager.wait_for_webrtc()
                 except TimeoutError as e:
                     logger.error(f"Timeout waiting for WebRTC connection: {e}")
                     raise
@@ -82,9 +83,9 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
                 logger.info(
                     "Received the webrtc_connection from Pipecat Cloud, cancelling the timeout"
                 )
-                GLOBALS["session_manager"].cancel_timeout()
+                session_manager.cancel_timeout()
                 if not args.body:
-                    args.body = GLOBALS["pipecat_session_body"]
+                    args.body = GLOBALS.get("pipecat_session_body")
 
         try:
             await bot(args)
@@ -92,9 +93,9 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
             logger.error(f"Exception running bot(): {e}")
         finally:
             logger.info(f"Stopping bot session with metadata: {json.dumps(metadata)}")
-            if GLOBALS["session_manager"]:
-                GLOBALS["session_manager"].complete_session()
-                GLOBALS["session_manager"] = None
+            session_manager = GLOBALS.get("session_manager")
+            if session_manager:
+                session_manager.complete_session()
                 GLOBALS["pipecat_session_body"] = None
 
 
