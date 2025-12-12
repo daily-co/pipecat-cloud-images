@@ -94,7 +94,6 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
             logger.info(f"Stopping bot session with metadata: {json.dumps(metadata)}")
             if GLOBALS["session_manager"]:
                 GLOBALS["session_manager"].complete_session()
-                GLOBALS["session_manager"] = None
                 GLOBALS["pipecat_session_body"] = None
 
 
