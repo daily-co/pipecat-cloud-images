@@ -68,7 +68,7 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
         logger.info(f"Starting bot session with metadata: {json.dumps(metadata)}")
         logger.debug(f"Transport type: {transport_type}")
 
-        if GLOBALS["session_manager"]:
+        if GLOBALS.get("session_manager"):
             if isinstance(args, PipecatSessionArguments) and transport_type == "webrtc":
                 logger.info("Will wait for the webrtc_connection to be set!")
                 try:
@@ -92,7 +92,7 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
             logger.error(f"Exception running bot(): {e}")
         finally:
             logger.info(f"Stopping bot session with metadata: {json.dumps(metadata)}")
-            if GLOBALS["session_manager"]:
+            if GLOBALS.get("session_manager"):
                 GLOBALS["session_manager"].complete_session()
                 GLOBALS["session_manager"] = None
                 GLOBALS["pipecat_session_body"] = None
