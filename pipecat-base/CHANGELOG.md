@@ -5,6 +5,21 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.13] - 2026-01-19
+
+### Added
+
+- Added support for setting the Pipecat log level via an environment variable,
+  `PIPECAT_LOG_LEVEL`.
+
+## [0.1.12] - 2025-12-10
+
+### Changed
+
+- Improved handling for SmallWebRTCTransport; eliminates the need for Pipecat
+  application code to handle multiple calls to the `bot()` method in the bot.py
+  file.
+
 ## [0.1.11] - 2025-11-19
 
 ### Added

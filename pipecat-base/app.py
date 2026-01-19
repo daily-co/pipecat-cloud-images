@@ -45,8 +45,9 @@ session_logger_format = (
     "{name}:{function}:{line} | "
     "{extra[session_id]} - {message}"
 )
+log_level = environ.get("PIPECAT_LOG_LEVEL", "DEBUG").upper()
 logger.remove()
-logger.add(sys.stderr, format=session_logger_format)
+logger.add(sys.stderr, format=session_logger_format, level=log_level)
 logger.configure(extra={"session_id": "NONE"})
 
 image_version = environ.get("IMAGE_VERSION", "unknown")
