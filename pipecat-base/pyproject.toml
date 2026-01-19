@@ -4,7 +4,7 @@ version = "0.1.13"
 description = "Pipecat Cloud Base Image"
 requires-python = ">=3.10"
 dependencies = [
-    "fastapi[standard]~=0.115.0",
+    "fastapi[standard]>=0.115.6,<0.128.0",
     "loguru~=0.7.3",
     "pipecatcloud>=0.2.6",
     "pip",
