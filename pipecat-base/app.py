@@ -1,15 +1,19 @@
 #!/usr/bin/env python
 
+import asyncio
 import base64
+import inspect
 import json
 import sys
 from contextlib import asynccontextmanager
 from os import environ
-from typing import Annotated, List, Optional
+from typing import Annotated, Callable, List, Optional, Union
 
 import aiohttp
+import bot as bot_module
 from bot import bot
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request, WebSocket
+from fastapi.responses import JSONResponse
 from fastapi.websockets import WebSocketState
 from feature_manager import FeatureKeys, FeatureManager
 from loguru import logger
@@ -21,6 +25,33 @@ from pipecatcloud.agent import (
 )
 from pipecatcloud_system import add_lifespan_to_app, app
 from waiting_server import Config, WaitingServer
+
+# ------------------------------------------------------------
+# Health check functions (readyz can be overridden by customer bot.py)
+# ------------------------------------------------------------
+ReadyzResult = Union[bool, dict]
+
+
+def _default_readyz() -> bool:
+    """Default readiness check - always returns True."""
+    return True
+
+
+# Try to import customer-defined readyz function, fall back to default
+readyz_func: Callable[[], ReadyzResult] = getattr(bot_module, "readyz", _default_readyz)
+
+
+async def _call_readyz_func(func: Callable[[], ReadyzResult]) -> ReadyzResult:
+    """Call readyz function, handling both sync and async."""
+    try:
+        if asyncio.iscoroutinefunction(func) or inspect.iscoroutinefunction(func):
+            return await func()
+        else:
+            return func()
+    except Exception as e:
+        logger.warning(f"Health check function raised exception: {e}")
+        return {"ready": False, "error": str(e)}
+
 
 # Global state dictionary
 GLOBALS = {}
@@ -100,7 +131,47 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
                 GLOBALS["pipecat_session_body"] = None
 
 
+# ------------------------------------------------------------
+# Health check routes (Kubernetes probes)
+# ------------------------------------------------------------
+@app.get("/readyz")
+async def readyz():
+    """Kubernetes readiness probe endpoint.
+
+    Override by defining a `readyz()` function in your bot.py that returns either:
+    - bool: True for ready, False for not ready
+    - dict: Must contain "ready" key (bool), can include additional info
+    """
+    result = await _call_readyz_func(readyz_func)
+
+    # Handle bool return type
+    if isinstance(result, bool):
+        if result:
+            return JSONResponse(content={"status": "ok"}, status_code=200)
+        return JSONResponse(content={"status": "not ready"}, status_code=503)
+
+    # Handle dict return type
+    if isinstance(result, dict):
+        is_ready = result.get("ready", False)
+        status_code = 200 if is_ready else 503
+        return JSONResponse(content=result, status_code=status_code)
+
+    # Unexpected return type
+    logger.warning(f"readyz() returned unexpected type: {type(result)}")
+    return JSONResponse(
+        content={"status": "error", "error": "invalid readyz return type"}, status_code=503
+    )
+
+
+@app.get("/livez")
+async def livez():
+    """Kubernetes liveness probe endpoint."""
+    return JSONResponse(content={"status": "ok"}, status_code=200)
+
+
+# ------------------------------------------------------------
 # Basic routes (always available)
+# ------------------------------------------------------------
 @app.post("/bot")
 async def handle_bot_request(
     body: dict,

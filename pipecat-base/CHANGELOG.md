@@ -5,6 +5,26 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `/readyz` and `/livez` Kubernetes health check endpoints. `/livez`
+  always returns 200 OK. `/readyz` returns 200 OK by default, but customers can
+  override the readiness check by defining a `readyz()` function in their
+  `bot.py` that returns either a `bool` or a `dict` with a `ready` key:
+  ```python
+  # Simple
+  def readyz() -> bool:
+      return is_healthy()
+
+  # With details
+  def readyz() -> dict:
+      if not db_ok():
+          return {"ready": False, "reason": "database unavailable"}
+      return {"ready": True}
+  ```
+
 ## [0.1.13] - 2026-01-19
 
 ### Added
