@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       return {"ready": True}
   ```
 
+- Added `daily.co/pipecat-cloud-base-version` OCI label to enable automatic
+  feature detection by Pipecat Cloud. This label is inherited by customer images
+  and allows the platform to enable HTTP health probes when supported.
+
 ## [0.1.13] - 2026-01-19
 
 ### Added
