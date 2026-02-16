@@ -38,9 +38,10 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Reset the entrypoint, don't invoke `uv`
 ENTRYPOINT []
 
-# Set version environment variable
+# Set version information
 ARG VERSION
 ENV IMAGE_VERSION=$VERSION
+LABEL daily.co/pipecat-cloud-base-version=$VERSION
 
 # Set default command
 CMD ["sh", "-c", "if [ -f /app/pre-app.sh ]; then sh /app/pre-app.sh; fi && exec python app.py"]
