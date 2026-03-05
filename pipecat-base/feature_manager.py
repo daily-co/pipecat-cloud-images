@@ -23,6 +23,7 @@ class FeatureKeys(Enum):
     SMALLWEBRTC_TRANSPORT = "smallwebrtc_transport"
     SMALLWEBRTC_PATCH = "smallwebrtc_patch"
     WHATSAPP = "whatsapp"
+    OBSERVABILITY_OBSERVERS = "observability_observers"
 
 
 @dataclass
@@ -59,6 +60,7 @@ class FeatureManager:
         """Detect all available features and their status."""
         self._detect_pipecatcloud_features()
         self._detect_smallwebrtc_features()
+        self._detect_observer_features()
 
     def _create_feature_info(
         self,
@@ -258,6 +260,28 @@ class FeatureManager:
                 feature_name,
                 version_required,
                 status=FeatureStatus.ERROR,
+                error_message=str(e),
+            )
+
+    def _detect_observer_features(self):
+        """Detect observability observer features."""
+        feature_key = FeatureKeys.OBSERVABILITY_OBSERVERS
+        feature_name = "Observability Observers"
+        version_required = "pipecat-ai>=0.0.104"
+
+        try:
+            from pipecat.observers.startup_timing_observer import StartupTimingObserver
+            from pipecat.observers.user_bot_latency_observer import UserBotLatencyObserver
+
+            self.features[feature_key] = self._create_feature_info(
+                feature_key, feature_name, version_required
+            )
+        except ImportError as e:
+            self.features[feature_key] = self._create_feature_info(
+                feature_key,
+                feature_name,
+                version_required,
+                status=FeatureStatus.DISABLED,
                 error_message=str(e),
             )
 
