@@ -457,7 +457,24 @@ def setup_whatsapp_routes(get_ice_config_func):
             raise HTTPException(status_code=500, detail="Internal server error processing webhook")
 
 
-# Setup conditional routes
+# ------------------------------------------------------------
+# Optional: Observability observers via PIPECAT_SETUP_FILES
+# ------------------------------------------------------------
+def setup_pcc_observers():
+    """Configure observability observers if available."""
+    if not feature_manager.is_enabled(FeatureKeys.OBSERVABILITY_OBSERVERS):
+        return
+
+    setup_file = "/app/pcc_observers.py"
+    existing = environ.get("PIPECAT_SETUP_FILES", "")
+    if existing:
+        environ["PIPECAT_SETUP_FILES"] = f"{existing}:{setup_file}"
+    else:
+        environ["PIPECAT_SETUP_FILES"] = setup_file
+
+
+# Setup conditional routes and features
+setup_pcc_observers()
 setup_smallwebrtc_routes()
 
 
