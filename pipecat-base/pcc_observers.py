@@ -10,7 +10,6 @@ automatically for Pipecat Cloud observability.
 
 import json
 import uuid
-from collections import OrderedDict
 from datetime import datetime, timezone
 from os import environ
 
@@ -19,6 +18,16 @@ from loguru import logger
 from shared_state import GLOBALS
 
 _event_publisher_endpoint = environ.get("PIPECAT_EVENT_PUBLISHER_ENDPOINT")
+_http_session: aiohttp.ClientSession | None = None
+
+
+def _get_http_session() -> aiohttp.ClientSession:
+    global _http_session
+    if _http_session is None or _http_session.closed:
+        _http_session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=5),
+        )
+    return _http_session
 
 
 async def _publish_event(event_name: str, event_properties: dict | None = None):
@@ -36,16 +45,12 @@ async def _publish_event(event_name: str, event_properties: dict | None = None):
         payload["event_properties"] = event_properties
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                _event_publisher_endpoint,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as resp:
-                if resp.status >= 400:
-                    logger.warning(
-                        f"[pcc-observability] Event publish failed: {resp.status}"
-                    )
+        session = _get_http_session()
+        async with session.post(_event_publisher_endpoint, json=payload) as resp:
+            if resp.status >= 400:
+                logger.warning(
+                    f"[pcc-observability] Event publish failed: {resp.status}"
+                )
     except Exception as e:
         logger.warning(f"[pcc-observability] Event publish error: {e}")
 
@@ -88,7 +93,7 @@ async def _setup_startup_timing_observer(task):
 
     @observer.event_handler("on_transport_timing_report")
     async def on_transport_timing_report(observer, report):
-        properties = OrderedDict()
+        properties = {}
         properties["start_time"] = round(report.start_time, 3)
         if report.bot_connected_secs is not None:
             properties["bot_connected_secs"] = round(report.bot_connected_secs, 3)
