@@ -4,6 +4,7 @@ import asyncio
 import base64
 import inspect
 import json
+import logging
 import sys
 from contextlib import asynccontextmanager
 from os import environ
@@ -80,6 +81,16 @@ log_level = environ.get("PIPECAT_LOG_LEVEL", "DEBUG").upper()
 logger.remove()
 logger.add(sys.stderr, format=session_logger_format, level=log_level)
 logger.configure(extra={"session_id": "NONE"})
+
+
+# Filter out noisy Kubernetes probe requests from uvicorn access logs
+class HealthCheckFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return "/livez" not in msg and "/readyz" not in msg
+
+
+logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())
 
 image_version = environ.get("IMAGE_VERSION", "unknown")
 
