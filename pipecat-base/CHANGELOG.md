@@ -5,6 +5,14 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.19] - 2026-04-16
+
+### Fixed
+
+- Update transitive dependencies to resolve security vulnerabilities:
+  aiohttp 3.13.3 to 3.13.5, Pygments 2.19.2 to 2.20.0,
+  python-multipart 0.0.22 to 0.0.26.
+
 ## [0.1.18] - 2026-04-16
 
 ### Added
