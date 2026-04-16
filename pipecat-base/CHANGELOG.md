@@ -5,6 +5,24 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.18] - 2026-04-16
+
+### Added
+
+- Added support for Python 3.14, aligning with Pipecat 1.0.0's supported
+  Python versions.
+
+### Changed
+
+- Updated `fastapi` upper bound from `<0.128.0` to `<1`.
+- Bumped minimum `pipecatcloud` from `>=0.2.6` to `>=0.4.4`.
+- Bumped minimum `nltk` from `>=3.9.3` to `>=3.9.4`.
+
+### Deprecated
+
+- Python 3.10 images are deprecated and will be removed in a future release.
+  Pipecat 1.0.0 requires Python 3.11+. Please migrate to Python 3.11 or later.
+
 ## [0.1.17] - 2026-03-19
 
 ### Changed
