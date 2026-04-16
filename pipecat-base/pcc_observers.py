@@ -9,8 +9,50 @@ automatically for Pipecat Cloud observability.
 """
 
 import json
+import uuid
+from datetime import datetime, timezone
+from os import environ
 
+import aiohttp
 from loguru import logger
+from shared_state import GLOBALS
+
+_event_publisher_endpoint = environ.get("PIPECAT_EVENT_PUBLISHER_ENDPOINT")
+_http_session: aiohttp.ClientSession | None = None
+
+
+def _get_http_session() -> aiohttp.ClientSession:
+    global _http_session
+    if _http_session is None or _http_session.closed:
+        _http_session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=5),
+        )
+    return _http_session
+
+
+async def _publish_event(event_name: str, event_properties: dict | None = None):
+    """Publish an event to the event publisher endpoint if configured."""
+    if not _event_publisher_endpoint:
+        return
+
+    payload = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "session_id": GLOBALS.get("current_session_id", "NONE"),
+        "event_name": event_name,
+        "event_uuid": str(uuid.uuid4()),
+    }
+    if event_properties:
+        payload["event_properties"] = event_properties
+
+    try:
+        session = _get_http_session()
+        async with session.post(_event_publisher_endpoint, json=payload) as resp:
+            if resp.status >= 400:
+                logger.warning(
+                    f"[pcc-observability] Event publish failed: {resp.status}"
+                )
+    except Exception as e:
+        logger.warning(f"[pcc-observability] Event publish error: {e}")
 
 
 async def setup_pipeline_task(task):
@@ -43,15 +85,24 @@ async def _setup_startup_timing_observer(task):
             f" | total={report.total_duration_secs:.3f}s"
             f" | processors: {json.dumps(processors)}"
         )
+        await _publish_event("startup_timing", {
+            "start_time": round(report.start_time, 3),
+            "total_duration_secs": round(report.total_duration_secs, 3),
+            "processors": processors,
+        })
 
     @observer.event_handler("on_transport_timing_report")
     async def on_transport_timing_report(observer, report):
-        parts = [f"start_time={report.start_time:.3f}"]
+        properties = {}
+        properties["start_time"] = round(report.start_time, 3)
         if report.bot_connected_secs is not None:
-            parts.append(f"bot_connected={report.bot_connected_secs:.3f}s")
+            properties["bot_connected_secs"] = round(report.bot_connected_secs, 3)
         if report.client_connected_secs is not None:
-            parts.append(f"client_connected={report.client_connected_secs:.3f}s")
-        logger.info(f"[pcc-observability] Transport timing | {' | '.join(parts)}")
+            properties["client_connected_secs"] = round(report.client_connected_secs, 3)
+
+        formatted = " | ".join(f"{k}={v}" for k, v in properties.items())
+        logger.info(f"[pcc-observability] Transport timing | {formatted}")
+        await _publish_event("transport_timing", properties)
 
     task.add_observer(observer)
 
@@ -67,6 +118,9 @@ async def _setup_user_bot_latency_observer(task):
     @observer.event_handler("on_latency_measured")
     async def on_latency_measured(observer, latency_seconds):
         logger.info(f"[pcc-observability] User-bot latency | latency={latency_seconds:.3f}s")
+        await _publish_event("user_bot_latency", {
+            "latency_secs": round(latency_seconds, 3),
+        })
 
     @observer.event_handler("on_latency_breakdown")
     async def on_latency_breakdown(observer, breakdown):
@@ -76,8 +130,16 @@ async def _setup_user_bot_latency_observer(task):
             start = f" start_time={breakdown.user_turn_start_time:.3f} |"
         logger.info(f"[pcc-observability] Latency breakdown |{start} events: {json.dumps(events)}")
 
+        properties = {"events": events}
+        if breakdown.user_turn_start_time is not None:
+            properties["start_time"] = round(breakdown.user_turn_start_time, 3)
+        await _publish_event("latency_breakdown", properties)
+
     @observer.event_handler("on_first_bot_speech_latency")
     async def on_first_bot_speech_latency(observer, latency_seconds):
         logger.info(f"[pcc-observability] First bot speech | latency={latency_seconds:.3f}s")
+        await _publish_event("first_bot_speech_latency", {
+            "latency_secs": round(latency_seconds, 3),
+        })
 
     task.add_observer(observer)
