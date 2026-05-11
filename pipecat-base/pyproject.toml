@@ -1,13 +1,13 @@
 [project]
 name = "pipecat-base"
-version = "0.1.19"
+version = "0.1.20"
 description = "Pipecat Cloud Base Image"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi[standard]>=0.115.6,<1",
     "loguru~=0.7.3",
     "pipecatcloud>=0.4.4",
-    "pip>=26",
+    "pip>=26.1",
     "nltk>=3.9.4,<4",
 ]
 
