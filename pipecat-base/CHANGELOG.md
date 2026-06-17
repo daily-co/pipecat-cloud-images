@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.21] - 2026-06-17
 
+### Changed
+
+- Renamed the `PIPECAT_SETUP_FILES` observability hook from
+  `setup_pipeline_task` to `setup_pipeline_worker` to match Pipecat 1.4.0's
+  `PipelineTask` to `PipelineWorker` rename. The old name is kept as an alias,
+  so the bot images work without a `DeprecationWarning` on Pipecat 1.4.0+ while
+  remaining compatible with earlier versions.
+
 ### Security
 
 - Update transitive dependencies to resolve security vulnerabilities:

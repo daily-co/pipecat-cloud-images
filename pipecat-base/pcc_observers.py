@@ -13,13 +13,21 @@ import json
 from loguru import logger
 
 
-async def setup_pipeline_task(task):
-    """Called by PipelineTask._load_setup_files() for each task instance."""
-    await _setup_startup_timing_observer(task)
-    await _setup_user_bot_latency_observer(task)
+async def setup_pipeline_worker(worker):
+    """Called by PipelineWorker._load_setup_files() for each worker instance."""
+    await _setup_startup_timing_observer(worker)
+    await _setup_user_bot_latency_observer(worker)
 
 
-async def _setup_startup_timing_observer(task):
+# Backwards compatibility: Pipecat < 1.4.0 looks for ``setup_pipeline_task``.
+# 1.4.0+ prefers ``setup_pipeline_worker`` (and checks it first), falling back
+# to the old name only with a DeprecationWarning, so defining both keeps us
+# warning-free across versions. Drop this alias once the minimum supported
+# Pipecat is >= 1.4.0.
+setup_pipeline_task = setup_pipeline_worker
+
+
+async def _setup_startup_timing_observer(worker):
     try:
         from pipecat.observers.startup_timing_observer import StartupTimingObserver
     except ImportError:
@@ -53,10 +61,10 @@ async def _setup_startup_timing_observer(task):
             parts.append(f"client_connected={report.client_connected_secs:.3f}s")
         logger.info(f"[pcc-observability] Transport timing | {' | '.join(parts)}")
 
-    task.add_observer(observer)
+    worker.add_observer(observer)
 
 
-async def _setup_user_bot_latency_observer(task):
+async def _setup_user_bot_latency_observer(worker):
     try:
         from pipecat.observers.user_bot_latency_observer import UserBotLatencyObserver
     except ImportError:
@@ -80,4 +88,4 @@ async def _setup_user_bot_latency_observer(task):
     async def on_first_bot_speech_latency(observer, latency_seconds):
         logger.info(f"[pcc-observability] First bot speech | latency={latency_seconds:.3f}s")
 
-    task.add_observer(observer)
+    worker.add_observer(observer)
