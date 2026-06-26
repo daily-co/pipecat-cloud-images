@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import hashlib
 import inspect
 import json
 import logging
@@ -438,9 +439,18 @@ def setup_whatsapp_routes(get_ice_config_func):
 
         logger.debug(f"Processing WhatsApp webhook: {body}")
 
-        async def connection_callback(connection: SmallWebRTCConnection):
+        # (connection, call=None) works for both old and new pipecat:
+        # old pipecat calls connection_callback(connection) → call stays None;
+        # new pipecat calls connection_callback(connection, call) → call carries caller metadata.
+        async def connection_callback(connection: SmallWebRTCConnection, call=None):
+            caller = getattr(call, "from_", "unknown") if call else "unknown"
+            logger.debug(
+                f"WhatsApp connection_callback invoked: session_id={x_daily_session_id} caller={caller}"
+            )
             runner_args = SmallWebRTCSessionArguments(
-                session_id=x_daily_session_id, webrtc_connection=connection
+                session_id=x_daily_session_id,
+                webrtc_connection=connection,
+                body=call,
             )
             background_tasks.add_task(run_bot, runner_args)
 
@@ -452,6 +462,14 @@ def setup_whatsapp_routes(get_ice_config_func):
 
             # Process the webhook request
             raw_body = await request.body()
+            raw_body_sha256 = hashlib.sha256(raw_body).hexdigest() if raw_body else "empty"
+            logger.debug(
+                f"WhatsApp webhook signature check: "
+                f"raw_body_length={len(raw_body) if raw_body else 0} "
+                f"raw_body_sha256={raw_body_sha256} "
+                f"x_hub_signature_256={x_hub_signature_256}"
+            )
+
             result = await whatsapp_client.handle_webhook_request(
                 body,
                 connection_callback,
@@ -462,9 +480,17 @@ def setup_whatsapp_routes(get_ice_config_func):
             return {"status": "success", "message": "Webhook processed successfully"}
         except ValueError as ve:
             logger.warning(f"Invalid webhook request format: {ve}")
+            session_manager = GLOBALS.get("session_manager")
+            if session_manager:
+                logger.info("Completing session due to invalid webhook request")
+                session_manager.complete_session()
             raise HTTPException(status_code=400, detail=f"Invalid request: {str(ve)}")
         except Exception as e:
             logger.error(f"Internal error processing webhook: {e}")
+            session_manager = GLOBALS.get("session_manager")
+            if session_manager:
+                logger.info("Completing session due to internal error processing webhook")
+                session_manager.complete_session()
             raise HTTPException(status_code=500, detail="Internal server error processing webhook")
 
 
