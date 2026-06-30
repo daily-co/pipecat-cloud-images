@@ -5,6 +5,16 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.22] - 2026-06-30
+
+### Added
+
+- WhatsApp bots can now access caller information (e.g. the caller's phone number) through the session `body` field. The `connection_callback` accepts an optional `call` parameter introduced on `Pipecat` `1.4.0`; when present, the call object is forwarded as `body` in `SmallWebRTCSessionArguments`.
+
+### Fixed
+
+- WhatsApp sessions that fail during webhook processing (invalid request format or internal errors) are now finalized immediately instead of waiting for the session manager timeout.
+
 ## [0.1.21] - 2026-06-20
 
 ### Changed
