@@ -5,6 +5,21 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.23] - 2026-07-21
+
+### Added
+
+- Structured log emission for the Pipecat Cloud log-collection lane, active
+  only when the platform sets `PCC_LOG_DIR` (no behavior change otherwise).
+  The runner writes JSONL records (`@timestamp`, `stream`, `level`,
+  `session_id`, `line`) to `$PCC_LOG_DIR/bot.jsonl` for an in-pod shipper to
+  tail: framework log lines via a loguru file sink, and raw `print()` /
+  stdout / stderr output via file-descriptor capture that passes the original
+  bytes through unchanged (`kubectl logs` and existing collectors see exactly
+  what they saw before). Captured output is attributed to the active session,
+  with a short linger after session end so a bot's final output keeps its
+  attribution.
+
 ## [0.1.22] - 2026-06-30
 
 ### Added
