@@ -61,3 +61,8 @@ TAGS
 venv/
 .venv
 .env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/

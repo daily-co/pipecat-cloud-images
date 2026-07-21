@@ -13,8 +13,13 @@ dev = [
     "pipecat-ai[webrtc]>=0.0.79",
     "pre-commit~=4.2.0",
     "ruff~=0.12.1",
-    "python-dotenv>=1.0.1,<2.0.0"
+    "python-dotenv>=1.0.1,<2.0.0",
+    "loguru~=0.7.3",
+    "pytest~=8.4",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["pipecat-base/tests"]
 
 [tool.ruff]
 exclude = [".git"]
