@@ -33,6 +33,14 @@ console sink may ever write to the *captured* descriptors — ``install()``
 removes loguru's default sink before capturing, and every console sink must
 use ``console_stream()`` (the saved real stderr) with ``console_filter``
 (which also keeps captured lines from being displayed twice).
+
+Crash durability (PCC-1038): the file sink writes synchronously (one
+line-buffered ``write()`` per record into the OS page cache), so framework-lane
+lines survive a hard process death (``os._exit``, SIGKILL) the instant the
+``logger.*`` call returns. Capture-lane lines have one unavoidable async hop —
+the pump thread must read the pipe before the process dies — so a ``print()``
+in the final microseconds before a hard exit is best-effort. Bots that want
+guaranteed dying words should say them through the logger.
 """
 
 import json
@@ -189,7 +197,15 @@ def add_file_sink(target_logger, level: str):
             rotation=_ROTATION,
             retention=_RETENTION,
             encoding="utf-8",
-            enqueue=True,  # never block the event loop on file I/O
+            # Synchronous on purpose (PCC-1038): loguru's file sink is
+            # line-buffered ("a", buffering=1), so each record is one write()
+            # into the OS page cache — which survives os._exit/SIGKILL, letting
+            # the shipper deliver a crashing bot's last words. enqueue=True
+            # routed records through a queue thread that a hard exit destroys,
+            # losing exactly the final-burst lines the crash tail exists for.
+            # Cost: µs-scale file I/O on the emitting thread — negligible at
+            # bot logging volumes.
+            enqueue=False,
         )
     except OSError as e:
         (_console_stream or sys.stderr).write(
