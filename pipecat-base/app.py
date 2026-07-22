@@ -1,5 +1,12 @@
 #!/usr/bin/env python
 
+import pcc_structured_logs
+
+# Structured log capture (no-op unless PCC_LOG_DIR is set) must install before
+# the customer's bot module is imported below — bot code may print at import
+# time, and those lines must flow through the capture to reach the log lane.
+pcc_structured_logs.install()
+
 import asyncio
 import base64
 import hashlib
@@ -80,7 +87,17 @@ session_logger_format = (
 )
 log_level = environ.get("PIPECAT_LOG_LEVEL", "DEBUG").upper()
 logger.remove()
-logger.add(sys.stderr, format=session_logger_format, level=log_level)
+# Console goes to the saved real stderr when capture is active (writing to
+# sys.stderr would loop console output back into the capture); the filter
+# keeps captured stdout/stderr lines from being displayed a second time.
+logger.add(
+    pcc_structured_logs.console_stream() or sys.stderr,
+    format=session_logger_format,
+    level=log_level,
+    filter=pcc_structured_logs.console_filter,
+)
+# Structured JSONL file sink for the log-collection lane (no-op when disabled).
+pcc_structured_logs.add_file_sink(logger, log_level)
 logger.configure(extra={"session_id": "NONE"})
 
 
@@ -108,7 +125,11 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
         "session_id": args.session_id,
         "image_version": image_version,
     }
-    with logger.contextualize(session_id=args.session_id):
+    with (
+        logger.contextualize(session_id=args.session_id),
+        # Attribute captured print()/stdout output to this session too.
+        pcc_structured_logs.session_scope(args.session_id),
+    ):
         logger.info(f"Starting bot session with metadata: {json.dumps(metadata)}")
         logger.debug(f"Transport type: {transport_type}")
 

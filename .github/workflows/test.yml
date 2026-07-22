@@ -1,0 +1,28 @@
+name: Lint and Test
+
+on:
+  push:
+    branches: ['main']
+  pull_request:
+    branches: ['main']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Ruff format check
+        run: uv run ruff format --diff --check
+
+      - name: Ruff lint
+        run: uv run ruff check
+
+      - name: Pytest
+        run: uv run pytest -q
