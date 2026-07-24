@@ -49,8 +49,25 @@ def test_tasks_wait_returns_immediately_when_no_tasks():
     server = _make_server(should_exit_timeout=0.3)
     server.server_state.tasks = set()
 
-    start = time.time()
+    start = time.monotonic()
     asyncio.run(asyncio.wait_for(server.shutdown(), timeout=5.0))
-    elapsed = time.time() - start
+    elapsed = time.monotonic() - start
 
     assert elapsed < 1.0
+
+
+def test_string_timeout_does_not_crash_shutdown():
+    """SHUTDOWN_TIMEOUT arrives from the environment as a string in production.
+
+    Config must coerce it to a number so the deadline math does not raise
+    TypeError and abort shutdown before the wait loops even run.
+    """
+    server = _make_server(should_exit_timeout="0.3")
+    server.server_state.tasks = {object()}
+
+    start = time.monotonic()
+    asyncio.run(asyncio.wait_for(server.shutdown(), timeout=5.0))
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 3.0
+    assert server.server_state.tasks
