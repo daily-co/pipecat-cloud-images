@@ -60,7 +60,11 @@ class WaitingServer(uvicorn.server.Server):
         if self.server_state.tasks and not self.force_exit:
             msg = "Waiting for background tasks to complete. (CTRL+C to force quit)"
             logger.info(msg)
-            while self.server_state.tasks and not self.force_exit:
+            while (
+                self.server_state.tasks
+                and not self.force_exit
+                and (should_exit_deadline is None or time.time() < should_exit_deadline)
+            ):
                 await asyncio.sleep(0.1)
 
         # Send the lifespan shutdown event, and wait for application shutdown.
