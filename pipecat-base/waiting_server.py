@@ -67,6 +67,17 @@ class WaitingServer(uvicorn.server.Server):
             ):
                 await asyncio.sleep(0.1)
 
+            if (
+                self.server_state.tasks
+                and not self.force_exit
+                and should_exit_deadline is not None
+                and time.time() >= should_exit_deadline
+            ):
+                logger.warning(
+                    "Shutdown timeout reached with %d background task(s) still running; continuing shutdown.",
+                    len(self.server_state.tasks),
+                )
+
         # Send the lifespan shutdown event, and wait for application shutdown.
         if not self.force_exit:
             await self.lifespan.shutdown()

@@ -35,9 +35,9 @@ def test_tasks_wait_gives_up_at_deadline():
     # Simulate an in-flight bot session: a task that never finishes on its own.
     server.server_state.tasks = {object()}
 
-    start = time.time()
+    start = time.monotonic()
     asyncio.run(asyncio.wait_for(server.shutdown(), timeout=5.0))
-    elapsed = time.time() - start
+    elapsed = time.monotonic() - start
 
     # The loop must exit around the 0.3s deadline, not hang forever.
     assert elapsed < 3.0
