@@ -5,6 +5,22 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.24] - 2026-07-27
+
+### Changed
+
+- Bumped minimum `nltk` from `>=3.9.4` to `>=3.10.0`. nltk 3.10.0 sandboxes
+  file access to directories listed in `nltk.data.path`. The base image's
+  pre-downloaded `punkt_tab` data is unaffected, but bots that read or
+  download nltk data from a custom directory must now authorize it via
+  `nltk.data.path.append(...)` or `NLTK_DATA`, or nltk raises
+  `PermissionError`.
+
+### Security
+
+- Update dependencies to resolve security vulnerabilities: nltk 3.9.4 to
+  3.10.0, pip 26.1.1 to 26.1.2, pydantic-settings 2.12.0 to 2.14.2.
+
 ## [0.1.23] - 2026-07-21
 
 ### Added
