@@ -112,3 +112,70 @@ def test_end_to_end(tmp_path):
     outside = by_line["printed outside session"]
     assert outside["stream"] == "stdout"
     assert "session_id" not in outside
+
+
+CRASH_CHILD = textwrap.dedent(
+    """
+    import os
+    import sys
+    import time
+
+    import pcc_structured_logs
+    pcc_structured_logs.install()
+
+    from loguru import logger
+
+    logger.remove()
+    logger.add(
+        pcc_structured_logs.console_stream() or sys.stderr,
+        format="{extra[session_id]} - {message}",
+        level="DEBUG",
+        filter=pcc_structured_logs.console_filter,
+    )
+    pcc_structured_logs.add_file_sink(logger, "DEBUG")
+    logger.configure(extra={"session_id": "NONE"})
+
+    with (
+        logger.contextualize(session_id="sess-crash"),
+        pcc_structured_logs.session_scope("sess-crash"),
+    ):
+        logger.info("pre-crash line")
+        print("crash-tail stdout marker", flush=True)
+        time.sleep(0.05)  # one pump-thread beat: the capture lane's async hop
+        logger.error("these are the dying words")
+        os._exit(17)  # hard death: no atexit, no flush, no loguru teardown
+    """
+)
+
+
+def test_crash_tail_survives_hard_exit(tmp_path):
+    """PCC-1038: framework-lane lines written in the final microseconds before
+    os._exit must be on disk (synchronous line-buffered writes to the page
+    cache) — with enqueue=True this deterministically loses the dying words.
+    The captured stdout marker gets one pump beat (50ms) — the capture lane's
+    documented best-effort hop — and must also survive."""
+    proc = subprocess.run(
+        [sys.executable, "-c", CRASH_CHILD],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "PCC_LOG_DIR": str(tmp_path)},
+        cwd=str(PIPECAT_BASE_DIR),
+    )
+    assert proc.returncode == 17
+
+    records = [
+        json.loads(line) for line in (tmp_path / "bot.jsonl").read_text().splitlines() if line
+    ]
+    by_line = {r["line"]: r for r in records}
+
+    # The last framework record before death — the whole point of PCC-1038.
+    dying = by_line["these are the dying words"]
+    assert dying["level"] == "ERROR"
+    assert dying["session_id"] == "sess-crash"
+
+    assert by_line["pre-crash line"]["session_id"] == "sess-crash"
+
+    marker = by_line["crash-tail stdout marker"]
+    assert marker["stream"] == "stdout"
+    assert marker["session_id"] == "sess-crash"
