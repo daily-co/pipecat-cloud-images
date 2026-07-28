@@ -5,6 +5,25 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.26] - 2026-07-28
+
+### Fixed
+
+- Shutdown now respects `SHUTDOWN_TIMEOUT` end to end. Before, the wait for
+  background tasks to finish had no deadline, so a task that never finished
+  could hold the pod open past the timeout until Kubernetes SIGKILLed it. The
+  wait for background tasks and the application (lifespan) shutdown are both
+  bounded by the same deadline now, and each logs a warning when it runs out
+  of time instead of hanging.
+
+- `SHUTDOWN_TIMEOUT` is read from the environment as a string, so it is now
+  coerced to a float before the deadline math runs.
+
+### Changed
+
+- Shutdown deadlines use a monotonic clock, so a wall-clock (NTP) adjustment
+  during shutdown can no longer stretch or shorten the timeout.
+
 ## [0.1.25] - 2026-07-27
 
 ### Fixed

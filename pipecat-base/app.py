@@ -72,7 +72,7 @@ if log_features_summary:
     feature_manager.log_features_summary()
 
 server_config = Config(
-    environ.get("SHUTDOWN_TIMEOUT", 7200),
+    float(environ.get("SHUTDOWN_TIMEOUT", 7200)),
     app,
     host="0.0.0.0",
     port=int(environ.get("PORT", 8080)),
