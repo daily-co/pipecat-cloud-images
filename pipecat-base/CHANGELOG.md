@@ -11,19 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The maximum session duration configured for your service is now enforced
   inside the bot process. When a session reaches the limit, `bot()` is
-  cancelled and the pipeline shuts down. Previously the limit closed the
-  platform's connection to the bot, which a bot using an HTTP transport (for
-  example a Daily/WebRTC room) had no way to observe, so the session carried
-  on running past its limit.
+  cancelled. Previously the limit closed the platform's own request to the bot,
+  which a bot whose session is started by an HTTP request had no way to observe
+  — it connects its own media transport (a Daily room, for example) — so the
+  session carried on running past its limit.
 
   **This changes behaviour for sessions that currently overrun.** If your
   agent legitimately runs longer than its configured limit, raise
   `maxSessionDuration` (up to 4 hours) before adopting this version.
 
-  Cancellation is a graceful pipeline shutdown, not a kill: Pipecat unwinds the
-  pipeline and runs each processor's `cleanup()`. It is not a chance for the bot
-  to say goodbye, though — if you want that, keep your own timer that fires
-  before the limit.
+  If your bot runs its pipeline through `PipelineRunner`, the runner absorbs the
+  cancellation and unwinds the pipeline for you, so each processor's `cleanup()`
+  still runs. Otherwise `bot()` sees a `CancelledError` wherever it is awaiting
+  and cleanup is up to you. Either way it is not a chance for the bot to say
+  goodbye — if you want that, keep your own timer that fires before the limit.
 
 ## [0.1.26] - 2026-07-28
 

@@ -1,10 +1,10 @@
 """PCC-1066: the platform's session budget is enforced inside this process.
 
 Pipecat Cloud caps sessions at ``maxSessionDuration``, but the only thing it can
-do from outside is close its own request to us. On HTTP transports the media
-runs directly between this process and the transport provider, so that close is
-invisible to ``bot()`` and the session carries on — which is how a pod ended up
-running two live pipelines at once. The platform now sends its budget on the
+do from outside is close its own request to us. When a session is started by an
+HTTP request the bot goes on to connect its own media transport, so that close
+is invisible to ``bot()`` and the session carries on — which is how a pod ended
+up running two live pipelines at once. The platform now sends its budget on the
 ``/bot`` request and we stop the bot ourselves.
 
 Two behaviours here are easy to get wrong and are pinned deliberately:
@@ -163,6 +163,34 @@ class TestTeardownIsNotSwallowed:
         run = asyncio.create_task(app._run_bot_with_budget(_args()))
         await asyncio.sleep(0.05)
         run.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await run
+
+    @sync
+    async def test_teardown_during_the_unwind_still_propagates(self, monkeypatch):
+        """The case the budget makes easy to miss.
+
+        ``cancel_reason`` stays set for the rest of the session, so once the
+        budget has fired it can no longer distinguish our own cancellation from
+        a teardown arriving while the bot is still unwinding. Without a separate
+        discriminator this returns normally and the caller never learns the
+        process is going away.
+        """
+
+        async def slow_unwind_bot(args):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                pass  # absorb, like Pipecat's runner
+            await asyncio.sleep(0.5)  # ...then take a while to tear down
+
+        monkeypatch.setattr(app, "bot", slow_unwind_bot)
+        app.GLOBALS[app._BUDGET_KEY] = 0.05
+
+        run = asyncio.create_task(app._run_bot_with_budget(_args()))
+        await asyncio.sleep(0.15)  # budget has fired; bot is mid-unwind
+        run.cancel()
+
         with pytest.raises(asyncio.CancelledError):
             await run
 

@@ -114,10 +114,10 @@ image_version = environ.get("IMAGE_VERSION", "unknown")
 
 # Header carrying the session budget Pipecat Cloud has configured for this
 # service (`maxSessionDuration`). Enforcing it here is the only way the cap can
-# actually stop the bot: the platform can close its own request to us, but on
-# HTTP transports the media runs directly between this process and the transport
-# provider, so closing that request is invisible to bot() and the session simply
-# carries on.
+# actually stop the bot: the platform can close its own request to us, but when
+# a session is started by an HTTP request the bot goes on to connect its own
+# media transport (a Daily room, say), so closing that request is invisible to
+# bot() and the session simply carries on.
 #
 # There is deliberately no default. Only the platform knows the configured
 # value, so an absent header means "not supplied" and nothing is enforced.
@@ -183,6 +183,23 @@ def _parse_budget(raw: Optional[str]) -> Optional[float]:
     return budget
 
 
+def _cancellation_requested_on_self() -> bool:
+    """Has something cancelled the task running this coroutine?
+
+    Distinguishes "we cancelled the bot" from "someone cancelled us", which
+    matters while the bot is unwinding after the budget fired.
+
+    ``Task.cancelling()`` is 3.11+. Base images are built for 3.10 too (the
+    default is 3.12), so on 3.10 we cannot tell the two apart and fall back to
+    treating the cancellation as ours. The cost is confined to a teardown that
+    lands inside the bot's unwind window — a few tens of milliseconds — on a pod
+    that is going away regardless.
+    """
+    task = asyncio.current_task()
+    cancelling = getattr(task, "cancelling", None)
+    return bool(cancelling and cancelling())
+
+
 async def _run_bot_with_budget(args: SessionArguments) -> None:
     """Run bot(args), stopping it if it outlives the platform's session budget.
 
@@ -213,7 +230,13 @@ async def _run_bot_with_budget(args: SessionArguments) -> None:
     except asyncio.CancelledError:
         # Only swallow the cancellation we asked for. Anything else means this
         # process is going away, and the caller needs to see that.
-        if run.cancel_reason is None:
+        #
+        # cancel_reason alone is not enough to tell them apart: it stays set for
+        # the rest of the session, so a teardown arriving while the bot is still
+        # unwinding would look like our own deadline. We cancel the *bot* task
+        # and never this one, so a pending cancellation against this task can
+        # only have come from outside.
+        if run.cancel_reason is None or _cancellation_requested_on_self():
             raise
     finally:
         if deadline_task is not None:
