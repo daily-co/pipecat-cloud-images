@@ -5,6 +5,27 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.27] - 2026-07-31
+
+### Added
+
+- The maximum session duration configured for your service is now enforced
+  inside the bot process. When a session reaches the limit, `bot()` is
+  cancelled. Previously the limit closed the platform's own request to the bot,
+  which a bot whose session is started by an HTTP request had no way to observe
+  — it connects its own media transport (a Daily room, for example) — so the
+  session carried on running past its limit.
+
+  **This changes behaviour for sessions that currently overrun.** If your
+  agent legitimately runs longer than its configured limit, raise
+  `maxSessionDuration` (up to 4 hours) before adopting this version.
+
+  If your bot runs its pipeline through `PipelineRunner`, the runner absorbs the
+  cancellation and unwinds the pipeline for you, so each processor's `cleanup()`
+  still runs. Otherwise `bot()` sees a `CancelledError` wherever it is awaiting
+  and cleanup is up to you. Either way it is not a chance for the bot to say
+  goodbye — if you want that, keep your own timer that fires before the limit.
+
 ## [0.1.26] - 2026-07-28
 
 ### Fixed

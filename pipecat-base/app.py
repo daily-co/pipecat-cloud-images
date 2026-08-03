@@ -16,7 +16,7 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 from os import environ
-from typing import Annotated, Callable, List, Optional, Union
+from typing import Annotated, Callable, Dict, List, Optional, Union
 
 import aiohttp
 import bot as bot_module
@@ -112,6 +112,145 @@ logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())
 
 image_version = environ.get("IMAGE_VERSION", "unknown")
 
+# Header carrying the session budget Pipecat Cloud has configured for this
+# service (`maxSessionDuration`). Enforcing it here is the only way the cap can
+# actually stop the bot: the platform can close its own request to us, but when
+# a session is started by an HTTP request the bot goes on to connect its own
+# media transport (a Daily room, say), so closing that request is invisible to
+# bot() and the session simply carries on.
+#
+# There is deliberately no default. Only the platform knows the configured
+# value, so an absent header means "not supplied" and nothing is enforced.
+# Guessing would cut sessions short for anyone configured above the guess.
+MAX_SESSION_SECONDS_HEADER = "X-PCC-Max-Session-Seconds"
+
+_BUDGET_KEY = "pcc_session_budget"
+_warned_no_budget = False
+
+
+class _SessionRun:
+    """A running bot() call plus the reason it was stopped, if it was.
+
+    Cancellation is routed through here rather than cancelling the task
+    directly so that the reason survives, and so that a caller cancelling the
+    session is distinguishable from this process being torn down.
+    """
+
+    def __init__(self, task: "asyncio.Task"):
+        self.task = task
+        self.cancel_reason: Optional[str] = None
+
+    def cancel(self, reason: str) -> bool:
+        """Stop the bot. Returns False if it had already finished."""
+        if self.task.done():
+            return False
+        self.cancel_reason = reason
+        self.task.cancel()
+        return True
+
+
+# Sessions currently running bot(), keyed by session id. The session budget is
+# the only caller today; a platform "stop this session" request would reuse the
+# same primitive.
+_active_sessions: Dict[str, _SessionRun] = {}
+
+
+def _session_budget_seconds() -> Optional[float]:
+    """The platform's session budget for the current session, if it supplied one."""
+    global _warned_no_budget
+    budget = GLOBALS.get(_BUDGET_KEY)
+    if budget is None and not _warned_no_budget:
+        _warned_no_budget = True
+        logger.info(
+            "No session budget supplied by the platform "
+            f"({MAX_SESSION_SECONDS_HEADER} absent); the maximum session "
+            "duration will not be enforced inside this process."
+        )
+    return budget
+
+
+def _parse_budget(raw: Optional[str]) -> Optional[float]:
+    if raw is None:
+        return None
+    try:
+        budget = float(raw)
+    except ValueError:
+        logger.warning(f"Ignoring malformed {MAX_SESSION_SECONDS_HEADER}: {raw!r}")
+        return None
+    if budget <= 0:
+        logger.warning(f"Ignoring non-positive {MAX_SESSION_SECONDS_HEADER}: {raw!r}")
+        return None
+    return budget
+
+
+def _cancellation_requested_on_self() -> bool:
+    """Has something cancelled the task running this coroutine?
+
+    Distinguishes "we cancelled the bot" from "someone cancelled us", which
+    matters while the bot is unwinding after the budget fired.
+
+    ``Task.cancelling()`` is 3.11+. Base images are built for 3.10 too (the
+    default is 3.12), so on 3.10 we cannot tell the two apart and fall back to
+    treating the cancellation as ours. The cost is confined to a teardown that
+    lands inside the bot's unwind window — a few tens of milliseconds — on a pod
+    that is going away regardless.
+    """
+    task = asyncio.current_task()
+    cancelling = getattr(task, "cancelling", None)
+    return bool(cancelling and cancelling())
+
+
+async def _run_bot_with_budget(args: SessionArguments) -> None:
+    """Run bot(args), stopping it if it outlives the platform's session budget.
+
+    Cancelling is a graceful shutdown for a Pipecat pipeline, not a hard kill:
+    WorkerRunner absorbs the CancelledError and unwinds the pipeline normally
+    (CancelFrame through the processors, cleanup() on each). A bot that lets the
+    CancelledError propagate instead is also fine — either way this returns and
+    the caller's HTTP response is sent, which is what tells the platform the pod
+    is free again.
+    """
+    session_id = args.session_id
+    run = _SessionRun(asyncio.create_task(bot(args)))
+    if session_id:
+        _active_sessions[session_id] = run
+
+    budget = _session_budget_seconds()
+    deadline_task: Optional[asyncio.Task] = None
+    if budget is not None:
+
+        async def _deadline():
+            await asyncio.sleep(budget)
+            run.cancel(f"maximum session duration reached ({budget:g}s)")
+
+        deadline_task = asyncio.create_task(_deadline())
+
+    try:
+        await run.task
+    except asyncio.CancelledError:
+        # Only swallow the cancellation we asked for. Anything else means this
+        # process is going away, and the caller needs to see that.
+        #
+        # cancel_reason alone is not enough to tell them apart: it stays set for
+        # the rest of the session, so a teardown arriving while the bot is still
+        # unwinding would look like our own deadline. We cancel the *bot* task
+        # and never this one, so a pending cancellation against this task can
+        # only have come from outside.
+        if run.cancel_reason is None or _cancellation_requested_on_self():
+            raise
+    finally:
+        if deadline_task is not None:
+            deadline_task.cancel()
+        if session_id:
+            _active_sessions.pop(session_id, None)
+
+    # Checked after the await as well as in the except: a Pipecat bot absorbs
+    # the cancellation and returns normally, so the exception arm alone would
+    # miss the common case.
+    if run.cancel_reason:
+        logger.warning(f"Bot session stopped: {run.cancel_reason}")
+
+
 if feature_manager.is_enabled(FeatureKeys.SMALL_WEBRTC_SESSION):
     from pipecatcloud import SmallWebRTCSessionManager
     from pipecatcloud.agent import SmallWebRTCSessionArguments
@@ -153,7 +292,7 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
                     args.body = GLOBALS.get("pipecat_session_body")
 
         try:
-            await bot(args)
+            await _run_bot_with_budget(args)
         except Exception as e:
             logger.error(f"Exception running bot(): {e}")
         finally:
@@ -212,7 +351,14 @@ async def handle_bot_request(
     x_daily_room_token: Annotated[str | None, Header()] = None,
     x_daily_session_id: Annotated[str | None, Header()] = None,
     x_daily_transport_type: Annotated[str | None, Header()] = None,
+    x_pcc_max_session_seconds: Annotated[str | None, Header()] = None,
 ):
+    # Stashed rather than passed down because SmallWebRTC runs the bot from a
+    # different request: this one only waits for the WebRTC connection, and the
+    # actual bot() call happens in the /api/offer background task, which never
+    # sees these headers. Same reason pipecat_session_body is stashed below.
+    GLOBALS[_BUDGET_KEY] = _parse_budget(x_pcc_max_session_seconds)
+
     if x_daily_room_url and x_daily_room_token:
         args = DailySessionArguments(
             session_id=x_daily_session_id,
