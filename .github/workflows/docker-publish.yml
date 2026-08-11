@@ -63,13 +63,37 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: ./pipecat-base
-          platforms: linux/arm64
+          # Every customer bot is built FROM this image, so an arm64-only base
+          # means an amd64 customer cannot produce a runnable bot at all. This
+          # runner is arm64, so arm64 is the native leg and amd64 is emulated;
+          # buildx builds them together. Emulation is cheap here because nothing
+          # is compiled from source — the only emulated work is the apt install,
+          # and both platforms build in ~2 minutes.
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # One SBOM per platform, attached to the index. Scanning the index
+          # after the fact would describe only whichever platform resolved.
+          sbom: true
           build-args: |
             VERSION=${{ needs.find-images.outputs.base-version }}
             PYTHON_VERSION=${{ matrix.python-version }}
+
+      - name: Verify the pushed image is multi-arch
+        # Regression guard so a single-arch base cannot land again silently.
+        # Attestation manifests show up as unknown/unknown and are filtered out.
+        if: github.event_name != 'pull_request'
+        run: |
+          ref="dailyco/pipecat-base@${{ steps.build.outputs.digest }}"
+          archs=$(docker buildx imagetools inspect --raw "$ref" \
+            | jq -r '.manifests[].platform | select(.os != "unknown") | "\(.os)/\(.architecture)"' \
+            | sort -u)
+          echo "platforms: $(echo "$archs" | tr '\n' ' ')"
+          for want in linux/amd64 linux/arm64; do
+            echo "$archs" | grep -qx "$want" || { echo "!! missing $want"; exit 1; }
+          done
