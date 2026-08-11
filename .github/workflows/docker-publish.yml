@@ -68,11 +68,11 @@ jobs:
         with:
           context: ./pipecat-base
           # Every customer bot is built FROM this image, so an arm64-only base
-          # means an amd64 customer cannot produce a runnable bot at all
-          # (PCC-1081). This runner is arm64, so arm64 is the native leg and
-          # amd64 is emulated; buildx builds them together. Emulation is cheap
-          # here because nothing is compiled from source — the only emulated
-          # work is the apt install, and both platforms build in ~2 minutes.
+          # means an amd64 customer cannot produce a runnable bot at all. This
+          # runner is arm64, so arm64 is the native leg and amd64 is emulated;
+          # buildx builds them together. Emulation is cheap here because nothing
+          # is compiled from source — the only emulated work is the apt install,
+          # and both platforms build in ~2 minutes.
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
