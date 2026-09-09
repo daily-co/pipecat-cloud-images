@@ -5,8 +5,8 @@ FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-trixie-slim
 # Install the project into `/app`
 WORKDIR /app
 
-# Install system dependencies
-RUN apt update && apt install -y libopenblas-dev libresample1 libresample-dev libgl1 libglib2.0-0 && apt clean
+# Install system dependencies. tini is the runtime's PID 1 (see ENTRYPOINT).
+RUN apt update && apt install -y libopenblas-dev libresample1 libresample-dev libgl1 libglib2.0-0 tini && apt clean
 
 # Enable bytecode compilation
 ENV UV_COMPILE_BYTECODE=1
@@ -30,13 +30,37 @@ RUN VENV_SITE_PACKAGES=$(/app/.venv/bin/python -c "import site; print(site.getsi
     echo "/opt/krisp_viva/krisp_audio" > ${VENV_SITE_PACKAGES}/krisp_viva.pth
 
 # Copy application files
-COPY ./app.py ./waiting_server.py ./pipecatcloud_system.py ./feature_manager.py ./pcc_observers.py ./pcc_structured_logs.py /app/
+COPY ./app.py ./waiting_server.py ./pipecatcloud_system.py ./feature_manager.py ./pcc_observers.py ./pcc_structured_logs.py ./pcc_early_sigterm.py /app/
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Reset the entrypoint, don't invoke `uv`
-ENTRYPOINT []
+# tini holds PID 1 and runs the command as its child (PCC-1004). This also
+# replaces the base image's `uv` entrypoint.
+#
+# The kernel does not apply default signal dispositions to PID 1: a signal with
+# no handler is discarded. The CMD below execs Python into PID 1, and uvicorn
+# only installs its SIGTERM handler once every module-level import — the
+# customer's bot module included — has finished. A SIGTERM in that window was
+# dropped, and the container went on to start and serve on a pod the kubelet
+# had already told to stop, until the grace-period SIGKILL up to two hours
+# later. As tini's child Python takes the default disposition and dies at once;
+# once uvicorn's handler is up tini forwards to it and the drain is unchanged.
+# tini also reaps children orphaned by pre-app.sh, which Python as PID 1 never
+# did.
+#
+# -e 143: a SIGTERM that lands before app.py has installed its handler — in
+# the interpreter's own startup, or under a CMD that is not app.py — kills the
+# child on the default disposition, exit 143. Remapping that to 0 keeps what
+# every consumer of the exit code has always seen on a stop: Completed, and a
+# Succeeded pod, never Error / Failed. (After startup app.py itself absorbs
+# uvicorn's post-drain re-raise, so a normal stop exits 0 as it always did.)
+#
+# No -g: signals go to Python only. The shutdown drain can last a whole
+# session, and a helper backgrounded from pre-app.sh must not be killed at the
+# start of it; properly daemonised services are outside the process group
+# regardless.
+ENTRYPOINT ["/usr/bin/tini", "-e", "143", "--"]
 
 # Set version information
 ARG VERSION
