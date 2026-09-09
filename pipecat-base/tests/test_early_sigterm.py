@@ -9,6 +9,7 @@ the exit code informative: 0 plus the message means the handler ran, -SIGTERM
 means the default disposition did.
 """
 
+import json
 import os
 import signal
 import subprocess
@@ -89,6 +90,23 @@ CAPTURED = textwrap.dedent(
 )
 
 
+# As CAPTURED, but the bot module also prints during its import, right before
+# the signal lands: that line is still in the capture pipe when the handler
+# runs and must be drained into bot.jsonl before the process is gone.
+CAPTURED_WITH_IMPORT_OUTPUT = textwrap.dedent(
+    f"""
+    import time
+    import pcc_early_sigterm
+    pcc_early_sigterm.install()
+    import pcc_structured_logs
+    pcc_structured_logs.install()
+    print({READY!r}, flush=True)
+    print("IMPORT_LINE", flush=True)
+    time.sleep(30)
+    """
+)
+
+
 def _spawn(child: str, env: dict | None = None) -> subprocess.Popen:
     return subprocess.Popen(
         [sys.executable, "-c", child],
@@ -158,3 +176,20 @@ def test_message_survives_stderr_capture(tmp_path):
     code, _, err = sigterm_once_ready(CAPTURED, env={"PCC_LOG_DIR": str(tmp_path)})
     assert code == 0, f"expected the handler's clean exit, got {code}\n{err}"
     assert pcc_early_sigterm._MESSAGE.strip() in err
+
+
+def test_early_exit_is_recorded_in_the_structured_lane(tmp_path):
+    """The structured lane is where a startup exit gets diagnosed, so the
+    handler leaves a framework-lane record there in _serialize's shape — and
+    the bot module's own import output, still in the capture pipe when the
+    signal lands, is drained ahead of it rather than lost to os._exit."""
+    code, _, err = sigterm_once_ready(
+        CAPTURED_WITH_IMPORT_OUTPUT, env={"PCC_LOG_DIR": str(tmp_path)}
+    )
+    assert code == 0, f"expected the handler's clean exit, got {code}\n{err}"
+    lines = (tmp_path / "bot.jsonl").read_text().splitlines()
+    by_line = {r["line"]: r for r in (json.loads(line) for line in lines if line)}
+    ours = by_line.get(pcc_early_sigterm._MESSAGE)
+    assert ours is not None, f"no record of the early exit in bot.jsonl:\n{lines}"
+    assert ours["stream"] == "app" and ours["level"] == "WARNING" and ours["@timestamp"]
+    assert "IMPORT_LINE" in by_line, f"captured import output was not drained:\n{lines}"

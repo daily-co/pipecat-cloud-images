@@ -24,21 +24,46 @@ that. So the handler absorbs a SIGTERM the server reports it has already
 handled (uvicorn's should_exit), reproducing the PID 1 exit path exactly, and
 still exits at once for one the server has not — nothing is serving yet.
 
+When it does exit, it leaves a record where the platform will look for one: a
+line on the container's stderr and, when the structured log lane is on, a
+WARNING record in $PCC_LOG_DIR/bot.jsonl. That record is written with os.write
+and never through loguru — its handler lock is not reentrant, and the frame
+this signal interrupted may already hold it. The handler also waits one pump
+beat first, so whatever the bot module printed during its import reaches the
+capture lane before the process is gone.
+
 The exit is os._exit rather than SystemExit: the signal can land inside the
 customer's import, and an import-time ``except BaseException`` would swallow
 SystemExit and carry on starting. It exits 0, matching the ENTRYPOINT's
 ``-e 143`` remap — being asked to stop is not an error, before or after startup.
+
+A bot module, or an SDK it imports, that installs its own SIGTERM handler at
+import time replaces this one — signal.signal replaces, it does not chain —
+and from then on owns the window. defer_to_server() deliberately leaves such a
+handler alone, because uvicorn saves and restores whatever it finds. Nothing in
+pipecat or the pipecatcloud SDK does this at import time.
 """
 
+import json
 import os
 import signal
 import sys
+import time
+from datetime import datetime
 
-_MESSAGE = "SIGTERM received before the server was up; nothing to drain, exiting\n"
+_MESSAGE = "SIGTERM received before the server was up; nothing to drain, exiting"
+
+# One beat of pcc_structured_logs' pump threads: the capture lane's documented
+# best-effort hop between a print() and the JSONL file (PCC-1038).
+_PUMP_BEAT_SECONDS = 0.05
 
 # Set by defer_to_server(): returns True once the server has taken a SIGTERM
 # itself. None until then, so any SIGTERM exits.
 _server_handled = None
+
+
+def _structured_logs():
+    return sys.modules.get("pcc_structured_logs")
 
 
 def _console():
@@ -46,9 +71,31 @@ def _console():
     # pipe and a line written there would die with us in the pump thread. Its
     # saved console stream is the real stderr; fall back to sys.stderr when the
     # capture is not installed.
-    logs = sys.modules.get("pcc_structured_logs")
+    logs = _structured_logs()
     stream = logs.console_stream() if logs is not None else None
     return stream or sys.stderr
+
+
+def _record_in_structured_lane():
+    """Append the exit to bot.jsonl as a framework-lane record, in the shape
+    pcc_structured_logs._serialize emits. No Python-level lock is taken."""
+    log_dir = os.environ.get("PCC_LOG_DIR")
+    if not log_dir:
+        return
+    logs = _structured_logs()
+    name = getattr(logs, "_LOG_FILE_NAME", "bot.jsonl")
+    payload = {
+        "@timestamp": datetime.now().astimezone().isoformat(),
+        "stream": "app",
+        "level": "WARNING",
+        "line": _MESSAGE,
+    }
+    line = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+    fd = os.open(os.path.join(log_dir, name), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        os.write(fd, line.encode("utf-8"))
+    finally:
+        os.close(fd)
 
 
 def _on_sigterm(signum, frame):
@@ -56,9 +103,16 @@ def _on_sigterm(signum, frame):
         # uvicorn's post-drain re-raise. Absorb it, as PID 1 did, so run()
         # returns and the interpreter exits normally.
         return
+    logs = _structured_logs()
+    if logs is not None and logs.console_stream() is not None:
+        time.sleep(_PUMP_BEAT_SECONDS)
+    try:
+        _record_in_structured_lane()
+    except Exception:
+        pass
     try:
         stream = _console()
-        stream.write(_MESSAGE)
+        stream.write(_MESSAGE + "\n")
         stream.flush()
     except Exception:
         pass

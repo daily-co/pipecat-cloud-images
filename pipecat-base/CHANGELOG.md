@@ -5,7 +5,7 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.28] - 2026-09-09
 
 ### Fixed
 
@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   expired. The image now starts under `tini`, which also reaps any process
   left behind by `pre-app.sh`, and `app.py` installs a handler for the startup
   window itself so the fix holds in images that set their own `ENTRYPOINT`.
+  The stop is recorded in the agent's logs.
+
+  If your `bot.py`, or something it imports, installs its own `SIGTERM`
+  handler at import time, that handler replaces ours and is responsible for
+  exiting.
 
   Shutdown is otherwise unchanged: a running session is still drained for up
   to `SHUTDOWN_TIMEOUT`, and the container's exit code on a normal stop is
