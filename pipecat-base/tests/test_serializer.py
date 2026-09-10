@@ -66,6 +66,13 @@ def test_serialization_failure_yields_marker_not_exception():
     # A record missing required keys must not raise.
     out = json.loads(_serialize({"extra": {}}))
     assert "serialization failed" in out["line"]
+    assert out["stream"] == "app"
+    # The marker is a record like any other (PCC-1190): a store that stamps
+    # entries with the record time — Cloud Logging — files it when it was
+    # emitted, not when it was shipped, which can be hours apart after a
+    # backlog restart. Same tz-aware isoformat as every other record.
+    ts = datetime.fromisoformat(out["@timestamp"])
+    assert ts.tzinfo is not None
 
 
 def test_session_scope_sets_lingers_then_clears_even_on_error():

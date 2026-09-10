@@ -5,6 +5,18 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.29] - 2026-09-10
+
+### Fixed
+
+- The placeholder record the structured log lane writes when a log line
+  cannot be serialised now carries a timestamp, like every other record.
+  Previously it had none, so a log store that files entries by the time they
+  were emitted fell back to the time the line was shipped — which, after a
+  restart with a backlog to drain, can be hours later and outside any
+  time-range query for the session it belonged to. The record is otherwise
+  unchanged; nothing in a normal log line is affected.
+
 ## [0.1.28] - 2026-09-09
 
 ### Fixed

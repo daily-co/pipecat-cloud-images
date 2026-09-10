@@ -48,6 +48,7 @@ import os
 import sys
 import threading
 from contextlib import contextmanager
+from datetime import datetime
 from os import environ
 
 from loguru import logger
@@ -160,7 +161,18 @@ def _serialize(record) -> str:
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     except Exception:
         # Never let serialization break logging; emit a marker record instead.
-        return json.dumps({"stream": "app", "line": "<pcc_structured_logs: serialization failed>"})
+        # It carries a @timestamp like every other record (PCC-1190): a store
+        # that stamps entries with the record time — Cloud Logging — would
+        # otherwise file this line at the moment it was SHIPPED, hours late
+        # after a backlog restart and outside any time-range query, and a
+        # checkpoint-less re-read would not dedup it.
+        return json.dumps(
+            {
+                "@timestamp": datetime.now().astimezone().isoformat(),
+                "stream": "app",
+                "line": "<pcc_structured_logs: serialization failed>",
+            }
+        )
 
 
 def _format_record(record) -> str:
