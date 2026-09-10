@@ -160,19 +160,29 @@ def _serialize(record) -> str:
         payload["line"] = record["message"]
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     except Exception:
-        # Never let serialization break logging; emit a marker record instead.
-        # It carries a @timestamp like every other record (PCC-1190): a store
-        # that stamps entries with the record time — Cloud Logging — would
-        # otherwise file this line at the moment it was SHIPPED, hours late
-        # after a backlog restart and outside any time-range query, and a
-        # checkpoint-less re-read would not dedup it.
-        return json.dumps(
-            {
-                "@timestamp": datetime.now().astimezone().isoformat(),
-                "stream": "app",
-                "line": "<pcc_structured_logs: serialization failed>",
-            }
-        )
+        # Never let serialization break logging; emit a marker record instead
+        # — one shaped like every other record (PCC-1190), so the query that
+        # is actually opened can find it. A @timestamp: a store that stamps
+        # entries with the record time — Cloud Logging — would otherwise file
+        # this line at the moment it was SHIPPED, hours late after a backlog
+        # restart and outside any time-range query, and a checkpoint-less
+        # re-read would not dedup it. The current session: every store kind
+        # filters a session query on session_id, so a marker without one is
+        # unreachable from the per-session view no matter what its timestamp
+        # says; the module slot is what the raw lane stamps from, and nothing
+        # about the malformed record can make it unreadable. A level: the
+        # record's own is one of the things that may have raised, but a line
+        # that could not be serialised is an error, and without one a store
+        # that maps level to severity files it BELOW debug.
+        marker = {
+            "@timestamp": datetime.now().astimezone().isoformat(),
+            "stream": "app",
+            "level": "ERROR",
+        }
+        if _current_session_id:
+            marker["session_id"] = _current_session_id
+        marker["line"] = "<pcc_structured_logs: serialization failed>"
+        return json.dumps(marker)
 
 
 def _format_record(record) -> str:
