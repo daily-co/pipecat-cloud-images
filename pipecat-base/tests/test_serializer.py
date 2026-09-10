@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -62,10 +63,41 @@ def test_braces_and_unicode_survive():
     assert out["line"] == msg
 
 
+# The wire shape the shipper's strict parsers match: isoformat() with any
+# offset, the fraction optional because isoformat() drops it at microsecond
+# zero. Deliberately not datetime.fromisoformat(), which also takes a Z
+# suffix, a bare date and a space separator — shapes that would parse here
+# and fall through to the shipper's catch-all parser.
+RFC3339_WIRE = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?[+-]\d{2}:\d{2}"
+
+
 def test_serialization_failure_yields_marker_not_exception():
     # A record missing required keys must not raise.
     out = json.loads(_serialize({"extra": {}}))
     assert "serialization failed" in out["line"]
+    assert out["stream"] == "app"
+    # The marker is a record like any other (PCC-1190): a store that stamps
+    # entries with the record time — Cloud Logging — files it when it was
+    # emitted, not when it was shipped, which can be hours apart after a
+    # backlog restart.
+    assert re.fullmatch(RFC3339_WIRE, out["@timestamp"])
+    # A line that could not be serialised is an error; with no level a store
+    # that maps level to severity would file it below DEBUG, under any
+    # severity-filtered view.
+    assert out["level"] == "ERROR"
+    # Outside any session, none is claimed.
+    assert "session_id" not in out
+
+
+def test_serialization_failure_marker_carries_the_current_session():
+    # Every store kind filters a session query on session_id, so a marker
+    # without one cannot come back from the per-session view no matter what
+    # its timestamp says. Same slot the raw lane stamps from.
+    with pcc_structured_logs.session_scope("sess-marker"):
+        out = json.loads(_serialize({"extra": {}}))
+    assert out["session_id"] == "sess-marker"
+    # Same field order as a normal app-lane record.
+    assert list(out) == ["@timestamp", "stream", "level", "session_id", "line"]
 
 
 def test_session_scope_sets_lingers_then_clears_even_on_error():
