@@ -30,10 +30,46 @@ jobs:
           echo "base-version=$BASE_VERSION" >> $GITHUB_OUTPUT
           echo "python-versions=$PYTHON_VERSIONS" >> $GITHUB_OUTPUT
           echo "default-python=$DEFAULT_PYTHON" >> $GITHUB_OUTPUT
+  container-signal-checks:
+    runs-on: ubuntu-latest
+    name: Container Signal Checks
+    needs: find-images
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (runner arch, loaded locally)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./pipecat-base
+          # Single-platform and loaded: the checks run the image, and a
+          # multi-platform build cannot be loaded into the local daemon. The
+          # PID 1 behaviour under test is independent of the architecture and
+          # of the Python minor, so the runner's arch and the default Python
+          # are enough; build-base still covers the full matrix.
+          load: true
+          tags: pipecat-base:signal-check
+          build-args: |
+            VERSION=signal-check
+            PYTHON_VERSION=${{ needs.find-images.outputs.default-python }}
+
+      - name: Run container signal checks
+        working-directory: pipecat-base
+        # Asserts Python is not PID 1, that a SIGTERM during startup terminates
+        # the container both under tini and with tini bypassed, and that a
+        # graceful shutdown still reports exit 0 (PCC-1004). Stdlib only.
+        run: python3 container_signal_check.py pipecat-base:signal-check
+
   build-base:
     runs-on: ubuntu-24.04-arm
     name: Build Base Images
-    needs: find-images
+    # Every customer bot is built FROM this image: do not publish one that
+    # fails its signal checks. Runs on push as well as pull_request so the
+    # gate holds for the build that actually pushes.
+    needs: [find-images, container-signal-checks]
     strategy:
       matrix:
         python-version: ${{ fromJson(needs.find-images.outputs.python-versions) }}

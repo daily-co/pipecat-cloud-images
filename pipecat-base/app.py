@@ -1,5 +1,13 @@
 #!/usr/bin/env python
 
+import pcc_early_sigterm
+
+# A SIGTERM during startup — anywhere in the imports below, the customer's bot
+# module included — must terminate the process, not be discarded. Installed
+# before anything else so the window it covers starts here; deferred to uvicorn
+# right before the server starts.
+pcc_early_sigterm.install()
+
 import pcc_structured_logs
 
 # Structured log capture (no-op unless PCC_LOG_DIR is set) must install before
@@ -686,6 +694,11 @@ setup_smallwebrtc_routes()
 # Entrypoint
 # ------------------------------------------------------------
 if __name__ == "__main__":
+    # Startup is done; uvicorn owns SIGTERM from here. It installs its own
+    # handler in serve(), drains live sessions, then re-raises the signal — the
+    # early handler absorbs that once should_exit says uvicorn has handled it,
+    # so run() returns and the interpreter exits the way it always has.
+    pcc_early_sigterm.defer_to_server(lambda: server.should_exit)
     try:
         server.run()
     except KeyboardInterrupt:
