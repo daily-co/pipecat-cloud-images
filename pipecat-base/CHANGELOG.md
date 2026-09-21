@@ -5,6 +5,32 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.30] - 2026-09-21
+
+### Added
+
+- A session can now name the Pipecat Flows config it runs, so one deployed
+  agent can serve a different flow per session without rebuilding its image.
+  Pass the flow as `flow_config` on the `/start` request, as YAML or JSON
+  text, and the bot receives it as `runner_args.flow_config`:
+
+  ```python
+  config = (
+      FlowConfig.from_yaml(runner_args.flow_config)
+      if runner_args.flow_config
+      else FlowConfig.from_file(FLOW_CONFIG_PATH)
+  )
+  ```
+
+  A session that names no flow is unchanged, and a bot that ignores the field
+  behaves exactly as before. Reading it needs a pipecat-ai whose
+  `RunnerArguments` carries `flow_config`; on an older one the attribute is
+  still set, so a bot written for the newer release works either way.
+
+  Pipecat Cloud only sends a flow to an agent on this version or newer, so an
+  agent on an earlier base image is unaffected and its sessions keep running
+  as they do today.
+
 ## [0.1.29] - 2026-09-10
 
 ### Fixed
