@@ -2,22 +2,48 @@
 
 """Pipecat Cloud observability observers.
 
-This file is loaded via the PIPECAT_SETUP_FILES mechanism in PipelineTask.
-It injects StartupTimingObserver and UserBotLatencyObserver into every
-PipelineTask so that startup timing and user-bot latency data is logged
-automatically for Pipecat Cloud observability.
+This file is loaded via the PIPECAT_SETUP_FILES mechanism in PipelineWorker.
+It attaches the observers Pipecat Cloud reports on to every worker, so a
+session leaves behind its startup timing, the latency of each turn and what
+that latency was spent on, what each service cost and consumed, who was
+speaking and when, the function calls the bot made, and the errors it hit.
+
+Each record is published to the event pipeline when
+``PIPECAT_EVENT_PUBLISHER_ENDPOINT`` is set, and is otherwise dropped.
+
+Every observer is imported separately and skipped when the import fails, so a
+bot pinned to an older Pipecat reports whatever its version has rather than
+failing to start.
 """
 
-import json
 import uuid
 from datetime import datetime, timezone
 from os import environ
+from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 from loguru import logger
 from shared_state import GLOBALS
 
 _event_publisher_endpoint = environ.get("PIPECAT_EVENT_PUBLISHER_ENDPOINT")
+
+
+def _events_url(endpoint: str | None) -> str | None:
+    """Resolve the endpoint to the publisher's events route.
+
+    The publisher serves POST /events and 404s anything else, so an endpoint
+    configured as a bare host and port is completed here rather than dropping
+    every record.
+    """
+    if not endpoint:
+        return None
+    parts = urlsplit(endpoint)
+    if parts.path.strip("/"):
+        return endpoint
+    return urlunsplit((parts.scheme, parts.netloc, "/events", "", ""))
+
+
+_events_endpoint = _events_url(_event_publisher_endpoint)
 _http_session: aiohttp.ClientSession | None = None
 
 
@@ -32,7 +58,7 @@ def _get_http_session() -> aiohttp.ClientSession:
 
 async def _publish_event(event_name: str, event_properties: dict | None = None):
     """Publish an event to the event publisher endpoint if configured."""
-    if not _event_publisher_endpoint:
+    if not _events_endpoint:
         return
 
     payload = {
@@ -46,19 +72,37 @@ async def _publish_event(event_name: str, event_properties: dict | None = None):
 
     try:
         session = _get_http_session()
-        async with session.post(_event_publisher_endpoint, json=payload) as resp:
+        async with session.post(_events_endpoint, json=payload) as resp:
             if resp.status >= 400:
-                logger.warning(
-                    f"[pcc-observability] Event publish failed: {resp.status}"
-                )
+                logger.warning(f"[pcc-observability] Event publish failed: {resp.status}")
     except Exception as e:
         logger.warning(f"[pcc-observability] Event publish error: {e}")
+
+
+async def _publish_record(event_name: str, record):
+    """Publish an observer's record as an event.
+
+    A record is a Pydantic model, so the event's properties are the model's
+    own fields. Values a handler returned are whatever the application made
+    them, so a record that will not serialize is dropped rather than raised
+    into the handler that reported it.
+    """
+    try:
+        properties = record.model_dump(mode="json", exclude_none=True)
+    except Exception as e:
+        logger.warning(f"[pcc-observability] Could not serialize {event_name}: {e}")
+        return
+    await _publish_event(event_name, properties)
 
 
 async def setup_pipeline_worker(worker):
     """Called by PipelineWorker._load_setup_files() for each worker instance."""
     await _setup_startup_timing_observer(worker)
     await _setup_user_bot_latency_observer(worker)
+    await _setup_service_metrics_observer(worker)
+    await _setup_speaking_observer(worker)
+    await _setup_function_call_observer(worker)
+    await _setup_error_observer(worker)
 
 
 # Backwards compatibility: Pipecat < 1.4.0 looks for ``setup_pipeline_task``.
@@ -79,38 +123,11 @@ async def _setup_startup_timing_observer(worker):
 
     @observer.event_handler("on_startup_timing_report")
     async def on_startup_timing_report(observer, report):
-        processors = [
-            {
-                "name": t.processor_name,
-                "offset": round(t.start_offset_secs, 3),
-                "duration": round(t.duration_secs, 3),
-            }
-            for t in report.processor_timings
-        ]
-        logger.info(
-            f"[pcc-observability] Startup timing"
-            f" | start_time={report.start_time:.3f}"
-            f" | total={report.total_duration_secs:.3f}s"
-            f" | processors: {json.dumps(processors)}"
-        )
-        await _publish_event("startup_timing", {
-            "start_time": round(report.start_time, 3),
-            "total_duration_secs": round(report.total_duration_secs, 3),
-            "processors": processors,
-        })
+        await _publish_record("startup_timing", report)
 
     @observer.event_handler("on_transport_timing_report")
     async def on_transport_timing_report(observer, report):
-        properties = {}
-        properties["start_time"] = round(report.start_time, 3)
-        if report.bot_connected_secs is not None:
-            properties["bot_connected_secs"] = round(report.bot_connected_secs, 3)
-        if report.client_connected_secs is not None:
-            properties["client_connected_secs"] = round(report.client_connected_secs, 3)
-
-        formatted = " | ".join(f"{k}={v}" for k, v in properties.items())
-        logger.info(f"[pcc-observability] Transport timing | {formatted}")
-        await _publish_event("transport_timing", properties)
+        await _publish_record("transport_timing", report)
 
     worker.add_observer(observer)
 
@@ -125,29 +142,83 @@ async def _setup_user_bot_latency_observer(worker):
 
     @observer.event_handler("on_latency_measured")
     async def on_latency_measured(observer, latency_seconds):
-        logger.info(f"[pcc-observability] User-bot latency | latency={latency_seconds:.3f}s")
-        await _publish_event("user_bot_latency", {
-            "latency_secs": round(latency_seconds, 3),
-        })
+        await _publish_event("user_bot_latency", {"latency_secs": round(latency_seconds, 3)})
 
     @observer.event_handler("on_latency_breakdown")
     async def on_latency_breakdown(observer, breakdown):
-        events = breakdown.chronological_events()
-        start = ""
-        if breakdown.user_turn_start_time is not None:
-            start = f" start_time={breakdown.user_turn_start_time:.3f} |"
-        logger.info(f"[pcc-observability] Latency breakdown |{start} events: {json.dumps(events)}")
-
-        properties = {"events": events}
-        if breakdown.user_turn_start_time is not None:
-            properties["start_time"] = round(breakdown.user_turn_start_time, 3)
-        await _publish_event("latency_breakdown", properties)
+        await _publish_record("latency_breakdown", breakdown)
 
     @observer.event_handler("on_first_bot_speech_latency")
     async def on_first_bot_speech_latency(observer, latency_seconds):
-        logger.info(f"[pcc-observability] First bot speech | latency={latency_seconds:.3f}s")
-        await _publish_event("first_bot_speech_latency", {
-            "latency_secs": round(latency_seconds, 3),
-        })
+        await _publish_event(
+            "first_bot_speech_latency", {"latency_secs": round(latency_seconds, 3)}
+        )
+
+    worker.add_observer(observer)
+
+
+async def _setup_service_metrics_observer(worker):
+    try:
+        from pipecat.observers.service_metrics_observer import ServiceMetricsObserver
+    except ImportError:
+        return
+
+    observer = ServiceMetricsObserver()
+
+    @observer.event_handler("on_service_latency")
+    async def on_service_latency(observer, record):
+        await _publish_record("service_latency", record)
+
+    @observer.event_handler("on_service_usage")
+    async def on_service_usage(observer, record):
+        await _publish_record("service_usage", record)
+
+    worker.add_observer(observer)
+
+
+async def _setup_speaking_observer(worker):
+    try:
+        from pipecat.observers.speaking_observer import SpeakingObserver
+    except ImportError:
+        return
+
+    observer = SpeakingObserver()
+
+    @observer.event_handler("on_speech_event")
+    async def on_speech_event(observer, event):
+        await _publish_record("speech_event", event)
+
+    worker.add_observer(observer)
+
+
+async def _setup_function_call_observer(worker):
+    try:
+        from pipecat.observers.function_call_observer import FunctionCallObserver
+    except ImportError:
+        return
+
+    # A call's arguments and result carry whatever the conversation was about,
+    # so neither travels: what a bot's tools were asked and answered belongs to
+    # the bot, not to the platform running it.
+    observer = FunctionCallObserver(include_arguments=False, include_results=False)
+
+    @observer.event_handler("on_function_call_event")
+    async def on_function_call_event(observer, event):
+        await _publish_record("function_call_event", event)
+
+    worker.add_observer(observer)
+
+
+async def _setup_error_observer(worker):
+    try:
+        from pipecat.observers.error_observer import ErrorObserver
+    except ImportError:
+        return
+
+    observer = ErrorObserver()
+
+    @observer.event_handler("on_error")
+    async def on_error(observer, event):
+        await _publish_record("error", event)
 
     worker.add_observer(observer)

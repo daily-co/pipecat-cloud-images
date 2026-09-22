@@ -1,0 +1,248 @@
+"""The envelope the event publisher accepts, and how records become one.
+
+The publisher validates what it is sent (pipecat-cloud-sandbox
+event-publisher, types.ts): required non-empty strings under 256 characters,
+an ISO-8601 ``ts``, and ``event_properties`` as a JSON object under 10KB. A
+record that fails validation is a 400 and is lost, so these tests pin the
+envelope against those rules rather than against our own idea of it.
+"""
+
+import asyncio
+import json
+import re
+from datetime import datetime, timezone
+
+import pcc_observers
+import pytest
+from shared_state import GLOBALS
+
+# The publisher's own check, copied from types.ts.
+ISO_8601 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$")
+MAX_STRING_LENGTH = 256
+MAX_EVENT_PROPERTIES_LENGTH = 10240
+
+
+class _Response:
+    status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _Session:
+    """Stands in for the aiohttp session, recording what was posted."""
+
+    closed = False
+
+    def __init__(self):
+        self.posts = []
+
+    def post(self, url, json=None):
+        self.posts.append((url, json))
+        return _Response()
+
+
+@pytest.fixture
+def posted(monkeypatch):
+    session = _Session()
+    monkeypatch.setattr(pcc_observers, "_get_http_session", lambda: session)
+    monkeypatch.setattr(pcc_observers, "_events_endpoint", "http://publisher:3000/events")
+    monkeypatch.setitem(GLOBALS, "current_session_id", "session-abc")
+    return session.posts
+
+
+class _Record:
+    """A stand-in for an observer record, which is a Pydantic model."""
+
+    def __init__(self, dumped):
+        self._dumped = dumped
+
+    def model_dump(self, **kwargs):
+        return self._dumped
+
+
+class _Unserializable:
+    def model_dump(self, **kwargs):
+        raise TypeError("cannot serialize a socket")
+
+
+def test_a_bare_endpoint_is_completed_to_the_events_route():
+    """The publisher serves POST /events and 404s anything else."""
+    assert (
+        pcc_observers._events_url("http://pipecat-event-publisher:3000")
+        == "http://pipecat-event-publisher:3000/events"
+    )
+    assert (
+        pcc_observers._events_url("http://pipecat-event-publisher:3000/")
+        == "http://pipecat-event-publisher:3000/events"
+    )
+
+
+def test_an_endpoint_that_names_a_route_is_left_alone():
+    assert (
+        pcc_observers._events_url("http://pipecat-event-publisher:3000/events")
+        == "http://pipecat-event-publisher:3000/events"
+    )
+
+
+def test_nothing_is_published_without_an_endpoint():
+    assert pcc_observers._events_url(None) is None
+    assert pcc_observers._events_url("") is None
+
+
+def test_the_envelope_carries_what_the_publisher_requires(posted):
+    asyncio.run(pcc_observers._publish_event("speech_event", {"kind": "user_turn_started"}))
+
+    url, payload = posted[0]
+    assert url == "http://publisher:3000/events"
+    for field in ("ts", "session_id", "event_name", "event_uuid"):
+        assert isinstance(payload[field], str)
+        assert 0 < len(payload[field]) <= MAX_STRING_LENGTH
+    assert ISO_8601.match(payload["ts"])
+    assert payload["event_name"] == "speech_event"
+    assert payload["session_id"] == "session-abc"
+    assert payload["event_properties"] == {"kind": "user_turn_started"}
+
+
+def test_each_event_is_published_under_its_own_uuid(posted):
+    asyncio.run(pcc_observers._publish_event("error", {"category": "connectivity"}))
+    asyncio.run(pcc_observers._publish_event("error", {"category": "connectivity"}))
+
+    assert posted[0][1]["event_uuid"] != posted[1][1]["event_uuid"]
+
+
+def test_a_record_is_published_as_its_own_fields(posted):
+    record = _Record({"kind": "service_latency", "processor": "stt", "seconds": 0.3})
+
+    asyncio.run(pcc_observers._publish_record("service_latency", record))
+
+    _, payload = posted[0]
+    assert payload["event_name"] == "service_latency"
+    assert payload["event_properties"] == {
+        "kind": "service_latency",
+        "processor": "stt",
+        "seconds": 0.3,
+    }
+
+
+def test_a_record_that_will_not_serialize_is_dropped(posted):
+    """A handler's values are the application's, and may be anything."""
+    asyncio.run(pcc_observers._publish_record("function_call_event", _Unserializable()))
+
+    assert posted == []
+
+
+def test_a_failing_publish_never_reaches_the_observer(monkeypatch):
+    """Telemetry that cannot be delivered must not disturb the bot."""
+
+    class _Broken:
+        closed = False
+
+        def post(self, url, json=None):
+            raise OSError("connection refused")
+
+    monkeypatch.setattr(pcc_observers, "_get_http_session", lambda: _Broken())
+    monkeypatch.setattr(pcc_observers, "_events_endpoint", "http://publisher:3000/events")
+
+    asyncio.run(pcc_observers._publish_event("error", {"category": "connectivity"}))
+
+
+def test_publishing_is_off_when_no_endpoint_is_configured(monkeypatch):
+    posts = []
+
+    class _Session:
+        closed = False
+
+        def post(self, url, json=None):
+            posts.append(url)
+            return _Response()
+
+    monkeypatch.setattr(pcc_observers, "_get_http_session", lambda: _Session())
+    monkeypatch.setattr(pcc_observers, "_events_endpoint", None)
+
+    asyncio.run(pcc_observers._publish_event("speech_event", {"kind": "user_turn_started"}))
+
+    assert posts == []
+
+
+def test_the_timestamp_format_the_envelope_sends_is_accepted():
+    """The format `_publish_event` builds, checked against the publisher's regex."""
+    ts = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+    assert ISO_8601.match(ts)
+
+
+def test_a_record_stays_within_the_publishers_size_limit():
+    """A turn's contributions are the largest record published per turn."""
+    breakdown = {
+        "contributions": [
+            {
+                "key": "speech_synthesis",
+                "label": "speech synthesis",
+                "owner": "CartesiaTTSService#0",
+                "owner_kind": "service",
+                "start_time": 1758000000.0,
+                "duration_secs": 0.359,
+            }
+        ]
+        * 12,
+        "measured_from": "user_speech",
+        "total_secs": 1.044,
+    }
+
+    assert len(json.dumps(breakdown)) < MAX_EVENT_PROPERTIES_LENGTH
+
+
+class _Worker:
+    """Stands in for the PipelineWorker, recording what was attached."""
+
+    def __init__(self):
+        self.observers = []
+
+    def add_observer(self, observer):
+        self.observers.append(observer)
+
+
+def _hide(monkeypatch, *names):
+    """Make importing these observer modules raise, as an older Pipecat would."""
+    import sys
+
+    for name in names:
+        monkeypatch.setitem(sys.modules, f"pipecat.observers.{name}", None)
+
+
+def test_a_pipecat_without_the_newer_observers_reports_what_it_has(monkeypatch):
+    """A bot pins its own Pipecat, so the image cannot assume what is there."""
+    worker = _Worker()
+    _hide(
+        monkeypatch,
+        "service_metrics_observer",
+        "speaking_observer",
+        "function_call_observer",
+        "error_observer",
+    )
+
+    asyncio.run(pcc_observers.setup_pipeline_worker(worker))
+
+    attached = {type(o).__name__ for o in worker.observers}
+    assert attached == {"StartupTimingObserver", "UserBotLatencyObserver"}
+
+
+def test_a_pipecat_without_any_of_them_still_starts(monkeypatch):
+    worker = _Worker()
+    _hide(
+        monkeypatch,
+        "startup_timing_observer",
+        "user_bot_latency_observer",
+        "service_metrics_observer",
+        "speaking_observer",
+        "function_call_observer",
+        "error_observer",
+    )
+
+    asyncio.run(pcc_observers.setup_pipeline_worker(worker))
+
+    assert worker.observers == []
