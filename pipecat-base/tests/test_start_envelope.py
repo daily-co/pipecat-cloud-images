@@ -54,11 +54,14 @@ FLOW = "initial_node: greet\nnodes:\n  greet:\n    task_messages: []\n"
 
 @pytest.fixture(autouse=True)
 def _clean_globals():
-    app.GLOBALS.pop(app._BUDGET_KEY, None)
-    app.GLOBALS.pop(app._FLOW_CONFIG_KEY, None)
+    # The session body is stashed in the same place as the flow, so a test that
+    # leaves one behind would seed the next one.
+    keys = (app._BUDGET_KEY, app._FLOW_CONFIG_KEY, "pipecat_session_body")
+    for key in keys:
+        app.GLOBALS.pop(key, None)
     yield
-    app.GLOBALS.pop(app._BUDGET_KEY, None)
-    app.GLOBALS.pop(app._FLOW_CONFIG_KEY, None)
+    for key in keys:
+        app.GLOBALS.pop(key, None)
 
 
 @pytest.fixture
@@ -106,6 +109,16 @@ class TestSplitStartEnvelope:
         envelope = {"body": {}, "flow_config": FLOW}
         with pytest.raises(HTTPException) as excinfo:
             app._split_start_envelope(envelope, "99")
+        assert excinfo.value.status_code == 400
+
+    @pytest.mark.parametrize("flow_config", [None, "", 42, {"initial_node": "greet"}])
+    def test_a_flow_that_is_not_text_is_refused(self, flow_config):
+        # Any of these would be dropped on the way to the session arguments and
+        # the bot would run the flow its image ships with, which is what the
+        # refusal exists to prevent. Pipecat Cloud cannot send one today, so
+        # this is the image holding the contract on its own.
+        with pytest.raises(HTTPException) as excinfo:
+            app._split_start_envelope({"body": {}, "flow_config": flow_config}, "1")
         assert excinfo.value.status_code == 400
 
 
@@ -199,3 +212,63 @@ class TestSmallWebRTCDetour:
 
         assert app.GLOBALS["pipecat_session_body"] == {"u": 1}
         assert app.GLOBALS[app._FLOW_CONFIG_KEY] == FLOW
+
+    @sync
+    async def test_the_offer_side_collects_the_flow_and_clears_it(self, monkeypatch):
+        from pipecatcloud.agent import SmallWebRTCSessionArguments
+
+        class _Manager:
+            def cancel_timeout(self):
+                return None
+
+            def complete_session(self):
+                return None
+
+        captured = {}
+
+        async def fake_run_with_budget(args):
+            captured["args"] = args
+
+        # app only binds this name when the SmallWebRTC feature is enabled; the
+        # branch under test is the same either way.
+        monkeypatch.setattr(
+            app, "SmallWebRTCSessionArguments", SmallWebRTCSessionArguments, raising=False
+        )
+        monkeypatch.setattr(app, "_run_bot_with_budget", fake_run_with_budget)
+        monkeypatch.setitem(app.GLOBALS, "session_manager", _Manager())
+        monkeypatch.setitem(app.GLOBALS, "pipecat_session_body", {"u": 1})
+        monkeypatch.setitem(app.GLOBALS, app._FLOW_CONFIG_KEY, FLOW)
+
+        args = SmallWebRTCSessionArguments(
+            session_id="sess-1241", webrtc_connection=None, body=None
+        )
+        await app.run_bot(args)
+
+        assert captured["args"].flow_config == FLOW
+        assert captured["args"].body == {"u": 1}
+        # Cleared when the session ends, so the next session on this pod starts
+        # with neither.
+        assert app.GLOBALS[app._FLOW_CONFIG_KEY] is None
+        assert app.GLOBALS["pipecat_session_body"] is None
+
+    @sync
+    async def test_a_connection_that_never_arrives_leaves_nothing_behind(self, monkeypatch):
+        # Without this the stash outlives the failed session, and the next one
+        # to run on the pod picks it up — including a session that builds its
+        # own arguments and never had a /bot request of its own.
+        class _Manager:
+            async def wait_for_webrtc(self):
+                raise TimeoutError("no offer arrived")
+
+            def complete_session(self):
+                return None
+
+        monkeypatch.setitem(app.GLOBALS, "session_manager", _Manager())
+        args = app.PipecatSessionArguments(session_id="sess-1241", body={"u": 1})
+        app._attach_flow_config(args, FLOW)
+
+        with pytest.raises(TimeoutError):
+            await app.run_bot(args, "webrtc")
+
+        assert app.GLOBALS[app._FLOW_CONFIG_KEY] is None
+        assert app.GLOBALS["pipecat_session_body"] is None

@@ -307,6 +307,14 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
                     await session_manager.wait_for_webrtc()
                 except TimeoutError as e:
                     logger.error(f"Timeout waiting for WebRTC connection: {e}")
+                    # Nothing will collect what was stashed above. The offer
+                    # never arrived, so the /api/offer call that normally clears
+                    # these never runs, and leaving them set hands this
+                    # session's body and flow to whichever session the pod takes
+                    # next — including one that builds its own arguments and
+                    # never had a /bot request of its own.
+                    GLOBALS["pipecat_session_body"] = None
+                    GLOBALS[_FLOW_CONFIG_KEY] = None
                     raise
                 return
             if isinstance(args, SmallWebRTCSessionArguments):
@@ -398,7 +406,16 @@ def _split_start_envelope(body: dict, marker: Optional[str]):
             status_code=400,
             detail="start envelope needs both 'body' and 'flow_config'",
         )
-    return body["body"], body["flow_config"]
+    flow_config = body["flow_config"]
+    if not isinstance(flow_config, str) or not flow_config:
+        # A null or non-text flow would be dropped on the way to the session
+        # arguments and the bot would run the flow its image ships with, which
+        # is the outcome this refusal exists to prevent.
+        raise HTTPException(
+            status_code=400,
+            detail="start envelope 'flow_config' must be non-empty text",
+        )
+    return body["body"], flow_config
 
 
 def _attach_flow_config(args: SessionArguments, flow_config: Optional[str]) -> None:
