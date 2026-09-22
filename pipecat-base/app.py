@@ -22,6 +22,7 @@ import inspect
 import json
 import logging
 import os
+import stat
 import sys
 from contextlib import asynccontextmanager
 from os import environ
@@ -188,22 +189,48 @@ def _read_flow_config_file(name: str) -> str:
     if not name or name in (".", "..") or "/" in name or "\\" in name or "\0" in name:
         raise _FlowConfigFileError(f"{name!r} is not a bare filename")
     path = os.path.join(directory, name)
-    try:
-        # O_NOFOLLOW: a symlink at the name is refused rather than followed out
-        # of the directory.
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        with os.fdopen(fd, "rb") as f:
-            data = f.read()
-    except OSError as e:
-        raise _FlowConfigFileError(f"cannot read {path}: {e.strerror}") from None
-    flow_config = _decode_utf8(data)
+    flow_config = _decode_utf8(_read_regular_file(path))
     # Raised outside any except block: a UnicodeDecodeError carries the bytes
     # it failed on, and `from None` would only hide it, not drop it.
     if flow_config is None:
         raise _FlowConfigFileError(f"{path} is not UTF-8 text")
-    if not flow_config:
+    # Blank as well as empty: a file of whitespace would reach the bot as a
+    # flow and load as no document at all.
+    if not flow_config.strip():
         raise _FlowConfigFileError(f"{path} is empty")
     return flow_config
+
+
+def _read_regular_file(path: str) -> bytes:
+    """Read ``path`` if it is a regular file, never blocking and never leaking.
+
+    O_NOFOLLOW refuses a symlink at the name rather than following it out of
+    the directory. O_NONBLOCK refuses to wait on a FIFO, which would otherwise
+    hold the event loop until something opened its write end. Anything that
+    is not a regular file is refused, and the descriptor is always closed.
+    """
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as e:
+        raise _FlowConfigFileError(f"cannot read {path}: {e.strerror}") from None
+    try:
+        # The OSError carries a path and an errno, never file contents, so
+        # `from None` leaving it on __context__ is harmless here.
+        try:
+            is_regular = stat.S_ISREG(os.fstat(fd).st_mode)
+            chunks = []
+            while is_regular:
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        except OSError as e:
+            raise _FlowConfigFileError(f"cannot read {path}: {e.strerror}") from None
+        if not is_regular:
+            raise _FlowConfigFileError(f"{path} is not a regular file")
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
 
 
 class _SessionRun:
@@ -463,10 +490,11 @@ def _split_start_envelope(body: dict, marker: Optional[str]):
             detail="start envelope needs both 'body' and 'flow_config'",
         )
     flow_config = body["flow_config"]
-    if not isinstance(flow_config, str) or not flow_config:
+    if not isinstance(flow_config, str) or not flow_config.strip():
         # A null or non-text flow would be dropped on the way to the session
         # arguments and the bot would run the flow its image ships with, which
-        # is the outcome this refusal exists to prevent.
+        # is the outcome this refusal exists to prevent. A blank one would
+        # load as no document at all.
         raise HTTPException(
             status_code=400,
             detail="start envelope 'flow_config' must be non-empty text",
@@ -556,7 +584,13 @@ async def handle_websocket(
             # clears it on exit, which would cut short the attribution of a
             # session already running on this pod.
             with logger.contextualize(session_id=x_daily_session_id):
-                logger.error(f"Refusing websocket session {x_daily_session_id}: {e}")
+                logger.error(
+                    f"Refusing websocket session {x_daily_session_id}: "
+                    f"{_FLOW_CONFIG_FILE_HEADER} names a file this app cannot use: {e}"
+                )
+            # uvicorn answers a close before accept with HTTP 403 and drops the
+            # code, so a 403 is what this refusal looks like on the wire. The
+            # code is here for a server that does pass one on.
             await ws.close(code=1011)
             return
 

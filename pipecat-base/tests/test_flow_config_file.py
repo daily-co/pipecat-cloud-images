@@ -63,6 +63,14 @@ def logs():
     app.logger.remove(sink)
 
 
+def _open_fds():
+    """Descriptors this process holds, where the platform can list them."""
+    for fd_dir in ("/proc/self/fd", "/dev/fd"):
+        if os.path.isdir(fd_dir):
+            return len(os.listdir(fd_dir))
+    pytest.skip("no descriptor listing on this platform")
+
+
 def _connect(headers=None):
     with TestClient(app.app).websocket_connect("/ws", headers=headers or {}):
         pass
@@ -91,6 +99,8 @@ class TestAFlowThatCannotBeReadRefusesTheSession:
     def _refused(self, headers, captured, logs):
         with pytest.raises(WebSocketDisconnect) as exc:
             _connect(headers)
+        # TestClient hands the close message back verbatim. Under uvicorn the
+        # sidecar sees a 403 and no code, so this pins the refusal, not 1011.
         assert exc.value.code == 1011
         assert "args" not in captured, "bot() must never run"
         assert any("Refusing websocket session" in line for line in logs)
@@ -99,8 +109,21 @@ class TestAFlowThatCannotBeReadRefusesTheSession:
     def test_a_missing_file(self, volume, captured, logs):
         self._refused({"X-Pcc-Flow-Config-File": NAME}, captured, logs)
 
-    def test_an_empty_file(self, volume, captured, logs):
-        (volume / NAME).write_bytes(b"")
+    @pytest.mark.parametrize("content", [b"", b"\n", b"  \n\t \n"])
+    def test_an_empty_or_blank_file(self, content, volume, captured, logs):
+        (volume / NAME).write_bytes(content)
+        self._refused({"X-Pcc-Flow-Config-File": NAME}, captured, logs)
+
+    def test_a_directory_at_the_name(self, volume, captured, logs):
+        (volume / NAME).mkdir()
+        before = _open_fds()
+        self._refused({"X-Pcc-Flow-Config-File": NAME}, captured, logs)
+        assert _open_fds() <= before, "the refusal leaked a descriptor"
+
+    def test_a_fifo_at_the_name_is_refused_without_blocking(self, volume, captured, logs):
+        # Opened blocking, a FIFO with no writer would hold the event loop.
+        # pytest-timeout is not a dependency, so a hang fails the run loudly.
+        os.mkfifo(volume / NAME)
         self._refused({"X-Pcc-Flow-Config-File": NAME}, captured, logs)
 
     def test_a_file_that_is_not_utf8(self, volume, captured, logs):
