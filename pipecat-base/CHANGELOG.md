@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version or newer, and only for an agent deployed with
   `websocket_auth = "token"`. A session that names no flow is unchanged.
 
+### Fixed
+
+- `runner_args.flow_config` is now always present on websocket sessions too,
+  `None` when the session named no flow. In 0.1.30 it was set only for
+  sessions started over the other transports, so on a pipecat-ai release
+  whose `RunnerArguments` predates the field, the read shown above raised
+  `AttributeError` for every websocket session.
+
 ## [0.1.30] - 2026-09-21
 
 ### Added

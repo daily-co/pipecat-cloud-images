@@ -138,4 +138,23 @@ class TestReadFlowConfigFile:
             app._read_flow_config_file(NAME)
         assert NAME in str(exc.value)
         assert "secret-prompt" not in str(exc.value)
+        # Neither chain: a decode error carries the bytes it failed on, and
+        # `from None` only hides __context__, it does not drop it.
         assert exc.value.__cause__ is None
+        assert exc.value.__context__ is None
+
+    def test_a_flow_at_the_size_cap_round_trips(self, volume):
+        flow = "nodes:\n" + ("  # " + "x" * 60 + "\n") * 4100
+        assert len(flow.encode()) > 256 * 1024
+        (volume / NAME).write_text(flow, encoding="utf-8")
+        assert app._read_flow_config_file(NAME) == flow
+
+    def test_the_refusal_is_attributed_to_its_session(self, volume, captured):
+        records = []
+        sink = app.logger.add(lambda m: records.append(m.record), level="ERROR")
+        try:
+            with pytest.raises(WebSocketDisconnect):
+                _connect({"X-Pcc-Flow-Config-File": NAME, "X-Daily-Session-Id": "s-42"})
+        finally:
+            app.logger.remove(sink)
+        assert any(r["extra"].get("session_id") == "s-42" for r in records)
