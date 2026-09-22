@@ -23,9 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
 
   A session that names no flow is unchanged, and a bot that ignores the field
-  behaves exactly as before. Reading it needs a pipecat-ai whose
-  `RunnerArguments` carries `flow_config`; on an older one the attribute is
-  still set, so a bot written for the newer release works either way.
+  behaves exactly as before. `runner_args.flow_config` is always present —
+  `None` when the session named no flow — so the read above works whatever
+  version of pipecat-ai your image is built against, including one whose
+  `RunnerArguments` predates the field.
 
   Pipecat Cloud only sends a flow to an agent on this version or newer, so an
   agent on an earlier base image is unaffected and its sessions keep running

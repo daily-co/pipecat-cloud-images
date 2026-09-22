@@ -182,10 +182,13 @@ class TestAttachFlowConfig:
         app._attach_flow_config(args, FLOW)
         assert args.flow_config == FLOW
 
-    def test_no_flow_leaves_the_arguments_untouched(self):
+    def test_the_attribute_is_readable_even_when_no_flow_was_named(self):
+        # A bot reads runner_args.flow_config whether or not its session named
+        # one, and the pipecat-ai it is built against may predate the field.
+        # Leaving the attribute off would make that read raise on an older one.
         args = SimpleNamespace(session_id="s", body=None)
         app._attach_flow_config(args, None)
-        assert not hasattr(args, "flow_config")
+        assert args.flow_config is None
 
 
 class TestSmallWebRTCDetour:

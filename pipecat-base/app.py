@@ -421,14 +421,24 @@ def _split_start_envelope(body: dict, marker: Optional[str]):
 def _attach_flow_config(args: SessionArguments, flow_config: Optional[str]) -> None:
     """Put the session's flow on its arguments, where the bot reads it.
 
-    Set after construction rather than passed to it: ``flow_config`` arrives on
-    Pipecat's ``RunnerArguments`` only from the release that added it, and a
-    constructor keyword would fail outright on an image pinned to an older
-    pipecat-ai. Assigning afterwards works on both, so a bot written against the
-    newer one reads ``runner_args.flow_config`` either way.
+    Always set, and ``None`` when the session named no flow, so that reading
+    ``runner_args.flow_config`` works whatever pipecat-ai the image is built
+    against. The field arrives on Pipecat's ``RunnerArguments`` only from the
+    release that added it, and that version is the image author's choice rather
+    than ours; leaving the attribute off for a session that named no flow would
+    make the usual::
+
+        FlowConfig.from_yaml(runner_args.flow_config)
+        if runner_args.flow_config
+        else FlowConfig.from_file(...)
+
+    raise ``AttributeError`` on an older pipecat-ai for every such session. On a
+    newer one this assigns what the field already defaults to.
+
+    Set after construction rather than passed to it, because a constructor
+    keyword would fail outright on that older release.
     """
-    if flow_config is not None:
-        args.flow_config = flow_config
+    args.flow_config = flow_config
 
 
 # ------------------------------------------------------------
