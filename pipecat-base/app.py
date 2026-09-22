@@ -21,6 +21,7 @@ import hashlib
 import inspect
 import json
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
 from os import environ
@@ -148,6 +149,53 @@ _START_ENVELOPE_VERSION = "1"
 # Where the flow waits when the bot is started by a later request than the one
 # that carried it — the SmallWebRTC path, as ``pipecat_session_body`` does.
 _FLOW_CONFIG_KEY = "pipecat_session_flow_config"
+
+# On the websocket transport the platform reaches this app through a WebSocket
+# handshake, which has no body and holds about 8KB per header line — too small
+# for a flow. So the platform's sidecar writes the session's flow to a file on
+# a volume both containers mount, and names the file in this header. The value
+# is a bare filename, only ever opened inside the directory the platform names
+# in ``PCC_SESSION_FILES_DIR``; this app never lists that directory, so it
+# reads exactly the session's own file and nothing a previous session left.
+_FLOW_CONFIG_FILE_HEADER = "X-Pcc-Flow-Config-File"
+_SESSION_FILES_DIR_ENV = "PCC_SESSION_FILES_DIR"
+
+
+class _FlowConfigFileError(Exception):
+    """The handshake names a flow file this app cannot read."""
+
+
+def _read_flow_config_file(name: str) -> str:
+    """Read the flow the handshake points at.
+
+    Raises:
+        _FlowConfigFileError: The name is not a bare filename, the directory
+            is not configured, or the file is missing, unreadable or empty.
+            The caller refuses the session then: running it would use the
+            flow the image ships with while the caller believes theirs was
+            accepted. The message names the file, never its contents.
+    """
+    directory = environ.get(_SESSION_FILES_DIR_ENV)
+    if not directory:
+        raise _FlowConfigFileError(f"{_SESSION_FILES_DIR_ENV} is not set")
+    if not name or name in (".", "..") or "/" in name or "\\" in name or "\0" in name:
+        raise _FlowConfigFileError(f"{name!r} is not a bare filename")
+    path = os.path.join(directory, name)
+    try:
+        # O_NOFOLLOW: a symlink at the name is refused rather than followed out
+        # of the directory.
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as f:
+            data = f.read()
+    except OSError as e:
+        raise _FlowConfigFileError(f"cannot read {path}: {e.strerror}") from None
+    try:
+        flow_config = data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise _FlowConfigFileError(f"{path} is not UTF-8 text") from None
+    if not flow_config:
+        raise _FlowConfigFileError(f"{path} is empty")
+    return flow_config
 
 
 class _SessionRun:
@@ -485,8 +533,22 @@ async def handle_bot_request(
 async def handle_websocket(
     ws: WebSocket,
     x_daily_session_id: Annotated[str | None, Header()] = None,
+    x_pcc_flow_config_file: Annotated[str | None, Header()] = None,
     body: str = Query(None),
 ):
+    # Read before accepting, so a flow that cannot be read refuses the
+    # handshake and bot() never runs. The platform's sidecar logs the refusal
+    # on its side; the server logs nothing for a rejected handshake, so it is
+    # logged here too.
+    flow_config = None
+    if x_pcc_flow_config_file is not None:
+        try:
+            flow_config = _read_flow_config_file(x_pcc_flow_config_file)
+        except _FlowConfigFileError as e:
+            logger.error(f"Refusing websocket session {x_daily_session_id}: {e}")
+            await ws.close(code=1011)
+            return
+
     await ws.accept()
 
     decoded_body = None
@@ -504,6 +566,7 @@ async def handle_websocket(
         websocket=ws,
         body=decoded_body,
     )
+    _attach_flow_config(args, flow_config)
 
     await run_bot(args)
 

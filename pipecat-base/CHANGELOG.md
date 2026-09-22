@@ -5,6 +5,33 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.31] - 2026-09-22
+
+### Added
+
+- A session started with `transport: "websocket"` can now name a Pipecat Flows
+  config too, the same way the other transports can since 0.1.30: pass it as
+  `flow_config` on the `/start` request and the bot receives it as
+  `runner_args.flow_config`. The same read works on every transport:
+
+  ```python
+  config = (
+      FlowConfig.from_yaml(runner_args.flow_config)
+      if runner_args.flow_config
+      else FlowConfig.from_file(FLOW_CONFIG_PATH)
+  )
+  ```
+
+  The flow reaches the bot through a file on a volume the platform mounts in
+  the agent's container, not in the connection URL, so it is not limited by
+  URL or header size and never appears in the WebSocket request. If that
+  file cannot be read, the connection is refused and the session does not
+  start, so a session is never quietly run on the flow the image ships with.
+
+  Pipecat Cloud only sends a flow on this transport to an agent on this
+  version or newer, and only for an agent deployed with
+  `websocket_auth = "token"`. A session that names no flow is unchanged.
+
 ## [0.1.30] - 2026-09-21
 
 ### Added
