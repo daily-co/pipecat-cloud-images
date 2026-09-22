@@ -111,7 +111,7 @@ class TestSplitStartEnvelope:
             app._split_start_envelope(envelope, "99")
         assert excinfo.value.status_code == 400
 
-    @pytest.mark.parametrize("flow_config", [None, "", 42, {"initial_node": "greet"}])
+    @pytest.mark.parametrize("flow_config", [None, "", " \n\t", 42, {"initial_node": "greet"}])
     def test_a_flow_that_is_not_text_is_refused(self, flow_config):
         # Any of these would be dropped on the way to the session arguments and
         # the bot would run the flow its image ships with, which is what the

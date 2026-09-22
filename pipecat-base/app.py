@@ -21,6 +21,8 @@ import hashlib
 import inspect
 import json
 import logging
+import os
+import stat
 import sys
 from contextlib import asynccontextmanager
 from os import environ
@@ -148,6 +150,87 @@ _START_ENVELOPE_VERSION = "1"
 # Where the flow waits when the bot is started by a later request than the one
 # that carried it — the SmallWebRTC path, as ``pipecat_session_body`` does.
 _FLOW_CONFIG_KEY = "pipecat_session_flow_config"
+
+# On the websocket transport the platform reaches this app through a WebSocket
+# handshake, which has no body and holds about 8KB per header line — too small
+# for a flow. So the platform writes the session's flow to a file on a volume
+# it mounts in this container, and names the file in this header. The value
+# is a bare filename, only ever opened inside the directory the platform names
+# in ``PCC_SESSION_FILES_DIR``; this app never lists that directory, so it
+# reads exactly the session's own file and nothing a previous session left.
+_FLOW_CONFIG_FILE_HEADER = "X-Pcc-Flow-Config-File"
+_SESSION_FILES_DIR_ENV = "PCC_SESSION_FILES_DIR"
+
+
+class _FlowConfigFileError(Exception):
+    """The handshake names a flow file this app cannot read."""
+
+
+def _decode_utf8(data: bytes) -> Optional[str]:
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _read_flow_config_file(name: str) -> str:
+    """Read the flow the handshake points at.
+
+    Raises:
+        _FlowConfigFileError: The name is not a bare filename, the directory
+            is not configured, or the file is missing, unreadable or empty.
+            The caller refuses the session then: running it would use the
+            flow the image ships with while the caller believes theirs was
+            accepted. The message names the file, never its contents.
+    """
+    directory = environ.get(_SESSION_FILES_DIR_ENV)
+    if not directory:
+        raise _FlowConfigFileError(f"{_SESSION_FILES_DIR_ENV} is not set")
+    if not name or name in (".", "..") or "/" in name or "\\" in name or "\0" in name:
+        raise _FlowConfigFileError(f"{name!r} is not a bare filename")
+    path = os.path.join(directory, name)
+    flow_config = _decode_utf8(_read_regular_file(path))
+    # Raised outside any except block: a UnicodeDecodeError carries the bytes
+    # it failed on, and `from None` would only hide it, not drop it.
+    if flow_config is None:
+        raise _FlowConfigFileError(f"{path} is not UTF-8 text")
+    # Blank as well as empty: a file of whitespace would reach the bot as a
+    # flow and load as no document at all.
+    if not flow_config.strip():
+        raise _FlowConfigFileError(f"{path} is empty")
+    return flow_config
+
+
+def _read_regular_file(path: str) -> bytes:
+    """Read ``path`` if it is a regular file, never blocking and never leaking.
+
+    O_NOFOLLOW refuses a symlink at the name rather than following it out of
+    the directory. O_NONBLOCK refuses to wait on a FIFO, which would otherwise
+    hold the event loop until something opened its write end. Anything that
+    is not a regular file is refused, and the descriptor is always closed.
+    """
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as e:
+        raise _FlowConfigFileError(f"cannot read {path}: {e.strerror}") from None
+    try:
+        # The OSError carries a path and an errno, never file contents, so
+        # `from None` leaving it on __context__ is harmless here.
+        try:
+            is_regular = stat.S_ISREG(os.fstat(fd).st_mode)
+            chunks = []
+            while is_regular:
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        except OSError as e:
+            raise _FlowConfigFileError(f"cannot read {path}: {e.strerror}") from None
+        if not is_regular:
+            raise _FlowConfigFileError(f"{path} is not a regular file")
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
 
 
 class _SessionRun:
@@ -407,10 +490,11 @@ def _split_start_envelope(body: dict, marker: Optional[str]):
             detail="start envelope needs both 'body' and 'flow_config'",
         )
     flow_config = body["flow_config"]
-    if not isinstance(flow_config, str) or not flow_config:
+    if not isinstance(flow_config, str) or not flow_config.strip():
         # A null or non-text flow would be dropped on the way to the session
         # arguments and the bot would run the flow its image ships with, which
-        # is the outcome this refusal exists to prevent.
+        # is the outcome this refusal exists to prevent. A blank one would
+        # load as no document at all.
         raise HTTPException(
             status_code=400,
             detail="start envelope 'flow_config' must be non-empty text",
@@ -485,8 +569,31 @@ async def handle_bot_request(
 async def handle_websocket(
     ws: WebSocket,
     x_daily_session_id: Annotated[str | None, Header()] = None,
+    x_pcc_flow_config_file: Annotated[str | None, Header()] = None,
     body: str = Query(None),
 ):
+    # Read before accepting, so a flow that cannot be read refuses the
+    # handshake and bot() never runs. The server logs nothing for a rejected
+    # handshake, so the refusal is logged here, attributed to its session.
+    flow_config = None
+    if x_pcc_flow_config_file is not None:
+        try:
+            flow_config = _read_flow_config_file(x_pcc_flow_config_file)
+        except _FlowConfigFileError as e:
+            # contextualize only: session_scope sets a process-wide slot and
+            # clears it on exit, which would cut short the attribution of a
+            # session already running on this pod.
+            with logger.contextualize(session_id=x_daily_session_id):
+                logger.error(
+                    f"Refusing websocket session {x_daily_session_id}: "
+                    f"{_FLOW_CONFIG_FILE_HEADER} names a file this app cannot use: {e}"
+                )
+            # uvicorn answers a close before accept with HTTP 403 and drops the
+            # code, so a 403 is what this refusal looks like on the wire. The
+            # code is here for a server that does pass one on.
+            await ws.close(code=1011)
+            return
+
     await ws.accept()
 
     decoded_body = None
@@ -504,6 +611,7 @@ async def handle_websocket(
         websocket=ws,
         body=decoded_body,
     )
+    _attach_flow_config(args, flow_config)
 
     await run_bot(args)
 
