@@ -135,6 +135,20 @@ MAX_SESSION_SECONDS_HEADER = "X-PCC-Max-Session-Seconds"
 _BUDGET_KEY = "pcc_session_budget"
 _warned_no_budget = False
 
+# A session may name the Pipecat Flows config it runs. Pipecat Cloud then sends
+# the /bot request as an envelope, {"body": ..., "flow_config": ...}, marked by
+# this header; without the marker the request body is the session body and
+# nothing else, which is every request sent before flows could be named.
+#
+# The marker is what tells the two apart, rather than the shape of the JSON: a
+# session body that itself holds "body" and "flow_config" keys is a plausible
+# thing for a caller to send, and inferring would take their own data apart.
+_START_ENVELOPE_VERSION = "1"
+
+# Where the flow waits when the bot is started by a later request than the one
+# that carried it — the SmallWebRTC path, as ``pipecat_session_body`` does.
+_FLOW_CONFIG_KEY = "pipecat_session_flow_config"
+
 
 class _SessionRun:
     """A running bot() call plus the reason it was stopped, if it was.
@@ -286,9 +300,21 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
                 logger.info("Will wait for the webrtc_connection to be set!")
                 try:
                     GLOBALS["pipecat_session_body"] = args.body
+                    # The flow waits here with the body. This request only waits
+                    # for the connection; the bot runs from the later
+                    # /api/offer request, which never saw either of them.
+                    GLOBALS[_FLOW_CONFIG_KEY] = getattr(args, "flow_config", None)
                     await session_manager.wait_for_webrtc()
                 except TimeoutError as e:
                     logger.error(f"Timeout waiting for WebRTC connection: {e}")
+                    # Nothing will collect what was stashed above. The offer
+                    # never arrived, so the /api/offer call that normally clears
+                    # these never runs, and leaving them set hands this
+                    # session's body and flow to whichever session the pod takes
+                    # next — including one that builds its own arguments and
+                    # never had a /bot request of its own.
+                    GLOBALS["pipecat_session_body"] = None
+                    GLOBALS[_FLOW_CONFIG_KEY] = None
                     raise
                 return
             if isinstance(args, SmallWebRTCSessionArguments):
@@ -298,6 +324,8 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
                 session_manager.cancel_timeout()
                 if not args.body:
                     args.body = GLOBALS.get("pipecat_session_body")
+                if getattr(args, "flow_config", None) is None:
+                    _attach_flow_config(args, GLOBALS.get(_FLOW_CONFIG_KEY))
 
         try:
             await _run_bot_with_budget(args)
@@ -309,6 +337,7 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
             if session_manager:
                 session_manager.complete_session()
                 GLOBALS["pipecat_session_body"] = None
+                GLOBALS[_FLOW_CONFIG_KEY] = None
 
 
 # ------------------------------------------------------------
@@ -349,6 +378,69 @@ async def livez():
     return JSONResponse(content={"status": "ok"}, status_code=200)
 
 
+def _split_start_envelope(body: dict, marker: Optional[str]):
+    """Separate the session body from the flow the session named.
+
+    Returns the body to hand the bot and the flow config, or None when the
+    session named none.
+
+    Args:
+        body: The parsed request body.
+        marker: The envelope header, absent on a request that names no flow.
+
+    Raises:
+        HTTPException: The request is marked as an envelope but is not one.
+            Refusing beats running the bot on a body its caller never sent, or
+            on the flow the image ships with while the caller believes theirs
+            was accepted.
+    """
+    if marker is None:
+        return body, None
+    if marker != _START_ENVELOPE_VERSION:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unsupported start envelope version {marker!r}",
+        )
+    if not isinstance(body, dict) or "body" not in body or "flow_config" not in body:
+        raise HTTPException(
+            status_code=400,
+            detail="start envelope needs both 'body' and 'flow_config'",
+        )
+    flow_config = body["flow_config"]
+    if not isinstance(flow_config, str) or not flow_config:
+        # A null or non-text flow would be dropped on the way to the session
+        # arguments and the bot would run the flow its image ships with, which
+        # is the outcome this refusal exists to prevent.
+        raise HTTPException(
+            status_code=400,
+            detail="start envelope 'flow_config' must be non-empty text",
+        )
+    return body["body"], flow_config
+
+
+def _attach_flow_config(args: SessionArguments, flow_config: Optional[str]) -> None:
+    """Put the session's flow on its arguments, where the bot reads it.
+
+    Always set, and ``None`` when the session named no flow, so that reading
+    ``runner_args.flow_config`` works whatever pipecat-ai the image is built
+    against. The field arrives on Pipecat's ``RunnerArguments`` only from the
+    release that added it, and that version is the image author's choice rather
+    than ours; leaving the attribute off for a session that named no flow would
+    make the usual::
+
+        FlowConfig.from_yaml(runner_args.flow_config)
+        if runner_args.flow_config
+        else FlowConfig.from_file(...)
+
+    raise ``AttributeError`` on an older pipecat-ai for every such session. On a
+    newer one this assigns what the field already defaults to.
+
+    Set after construction rather than passed to it, because a constructor
+    keyword would fail outright on that older release.
+    """
+    args.flow_config = flow_config
+
+
 # ------------------------------------------------------------
 # Basic routes (always available)
 # ------------------------------------------------------------
@@ -360,12 +452,15 @@ async def handle_bot_request(
     x_daily_session_id: Annotated[str | None, Header()] = None,
     x_daily_transport_type: Annotated[str | None, Header()] = None,
     x_pcc_max_session_seconds: Annotated[str | None, Header()] = None,
+    x_pcc_start_envelope: Annotated[str | None, Header()] = None,
 ):
     # Stashed rather than passed down because SmallWebRTC runs the bot from a
     # different request: this one only waits for the WebRTC connection, and the
     # actual bot() call happens in the /api/offer background task, which never
     # sees these headers. Same reason pipecat_session_body is stashed below.
     GLOBALS[_BUDGET_KEY] = _parse_budget(x_pcc_max_session_seconds)
+
+    body, flow_config = _split_start_envelope(body, x_pcc_start_envelope)
 
     if x_daily_room_url and x_daily_room_token:
         args = DailySessionArguments(
@@ -379,6 +474,7 @@ async def handle_bot_request(
             session_id=x_daily_session_id,
             body=body,
         )
+    _attach_flow_config(args, flow_config)
 
     await run_bot(args, x_daily_transport_type)
 
