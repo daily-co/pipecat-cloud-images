@@ -31,6 +31,15 @@ _events_endpoint = environ.get("PIPECAT_EVENT_PUBLISHER_ENDPOINT")
 _http_session: aiohttp.ClientSession | None = None
 
 
+# An unreachable publisher makes every record wait out the timeout, which is
+# what this caps. Counting per session means one that comes back is picked up
+# without restarting the pod.
+_MAX_CONSECUTIVE_FAILURES = 10
+
+_consecutive_failures = 0
+_counting_for_session: str | None = None
+
+
 def _get_http_session() -> aiohttp.ClientSession:
     global _http_session
     if _http_session is None or _http_session.closed:
@@ -38,6 +47,20 @@ def _get_http_session() -> aiohttp.ClientSession:
             timeout=aiohttp.ClientTimeout(total=5),
         )
     return _http_session
+
+
+def _record_publish_result(succeeded: bool):
+    """Count failures in a row, and say once when a session gives up."""
+    global _consecutive_failures
+    if succeeded:
+        _consecutive_failures = 0
+        return
+    _consecutive_failures += 1
+    if _consecutive_failures == _MAX_CONSECUTIVE_FAILURES:
+        logger.warning(
+            f"[pcc-observability] {_MAX_CONSECUTIVE_FAILURES} publishes failed in a row;"
+            " not publishing again this session"
+        )
 
 
 async def _publish_event(event_name: str, event_properties: dict | None = None):
@@ -51,6 +74,13 @@ async def _publish_event(event_name: str, event_properties: dict | None = None):
 
     session_id = pcc_structured_logs.current_session()
     if not session_id:
+        return
+
+    global _consecutive_failures, _counting_for_session
+    if session_id != _counting_for_session:
+        _counting_for_session = session_id
+        _consecutive_failures = 0
+    if _consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
         return
 
     payload = {
@@ -67,8 +97,10 @@ async def _publish_event(event_name: str, event_properties: dict | None = None):
         async with session.post(_events_endpoint, json=payload) as resp:
             if resp.status >= 400:
                 logger.warning(f"[pcc-observability] Event publish failed: {resp.status}")
+            _record_publish_result(resp.status < 400)
     except Exception as e:
         logger.warning(f"[pcc-observability] Event publish error: {e}")
+        _record_publish_result(False)
 
 
 # The fields each record publishes. A bot installs its own Pipecat, so what a
