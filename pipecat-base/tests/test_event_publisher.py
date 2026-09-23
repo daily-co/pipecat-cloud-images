@@ -135,17 +135,22 @@ def test_a_record_that_will_not_serialize_is_dropped(posted):
 
 def test_a_failing_publish_never_reaches_the_observer(monkeypatch):
     """Telemetry that cannot be delivered must not disturb the bot."""
+    attempts = []
 
     class _Broken:
         closed = False
 
         def post(self, url, json=None):
+            attempts.append(url)
             raise OSError("connection refused")
 
     monkeypatch.setattr(pcc_observers, "_get_http_session", lambda: _Broken())
     monkeypatch.setattr(pcc_observers, "_events_endpoint", "http://publisher:3000/events")
+    monkeypatch.setattr(pcc_structured_logs, "_current_session_id", "session-abc")
 
     asyncio.run(pcc_observers._publish_event("error", {"category": "connectivity"}))
+
+    assert attempts == ["http://publisher:3000/events"]
 
 
 def test_publishing_is_off_when_no_endpoint_is_configured(monkeypatch):
