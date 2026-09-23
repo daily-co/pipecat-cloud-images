@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   latency. What they reported is published as events instead, and a session's
   timeline in the dashboard is built from Pipecat's own log output rather than
   from these.
+
 ## [0.1.31] - 2026-09-22
 
 ### Added
