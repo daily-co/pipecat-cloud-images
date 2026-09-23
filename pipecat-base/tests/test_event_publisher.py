@@ -153,6 +153,60 @@ def test_a_failing_publish_never_reaches_the_observer(monkeypatch):
     assert attempts == ["http://publisher:3000/events"]
 
 
+def _always_fails(monkeypatch, session_id="session-abc"):
+    """Point publishing at an endpoint that never answers."""
+    attempts = []
+
+    class _Broken:
+        closed = False
+
+        def post(self, url, json=None):
+            attempts.append(url)
+            raise OSError("connection refused")
+
+    monkeypatch.setattr(pcc_observers, "_get_http_session", lambda: _Broken())
+    monkeypatch.setattr(pcc_observers, "_events_endpoint", "http://publisher:3000/events")
+    monkeypatch.setattr(pcc_structured_logs, "_current_session_id", session_id)
+    monkeypatch.setattr(pcc_observers, "_consecutive_failures", 0)
+    monkeypatch.setattr(pcc_observers, "_counting_for_session", session_id)
+    return attempts
+
+
+def test_a_session_stops_publishing_once_it_has_failed_enough(monkeypatch):
+    """A region with no egress to the publisher waits out every record."""
+    attempts = _always_fails(monkeypatch)
+
+    for _ in range(pcc_observers._MAX_CONSECUTIVE_FAILURES + 20):
+        asyncio.run(pcc_observers._publish_event("error", {"category": "connectivity"}))
+
+    assert len(attempts) == pcc_observers._MAX_CONSECUTIVE_FAILURES
+
+
+def test_a_publish_that_works_clears_the_count(monkeypatch, posted):
+    """Failures have to be consecutive to stop a session trying."""
+    monkeypatch.setattr(
+        pcc_observers, "_consecutive_failures", pcc_observers._MAX_CONSECUTIVE_FAILURES - 1
+    )
+    monkeypatch.setattr(pcc_observers, "_counting_for_session", "session-abc")
+
+    asyncio.run(pcc_observers._publish_event("error", {"category": "connectivity"}))
+
+    assert pcc_observers._consecutive_failures == 0
+
+
+def test_the_next_session_tries_again(monkeypatch):
+    """A publisher that comes back is picked up without restarting the pod."""
+    attempts = _always_fails(monkeypatch)
+    for _ in range(pcc_observers._MAX_CONSECUTIVE_FAILURES + 5):
+        asyncio.run(pcc_observers._publish_event("error", {"category": "connectivity"}))
+    gave_up_at = len(attempts)
+
+    monkeypatch.setattr(pcc_structured_logs, "_current_session_id", "session-def")
+    asyncio.run(pcc_observers._publish_event("error", {"category": "connectivity"}))
+
+    assert len(attempts) == gave_up_at + 1
+
+
 def test_publishing_is_off_when_no_endpoint_is_configured(monkeypatch):
     posts = []
 
