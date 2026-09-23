@@ -79,16 +79,96 @@ async def _publish_event(event_name: str, event_properties: dict | None = None):
         logger.warning(f"[pcc-observability] Event publish error: {e}")
 
 
-async def _publish_record(event_name: str, record):
-    """Publish an observer's record as an event.
+# The fields each record publishes. A bot installs its own Pipecat, so what a
+# record contains is not ours to review; naming fields here keeps one added
+# upstream from travelling further than the bot until someone adds it.
+#
+# Free text stays behind — a tool's arguments and result, the exception its
+# handler raised, a processor's error message — since any of it can quote what
+# was said; `push_error_frame` still logs the message for the bot's own
+# session. Nested timings travel whole: processor names, keys and durations.
+_PUBLISHED_FIELDS: dict[str, dict] = {
+    "startup_timing": {
+        "start_time": True,
+        "total_duration_secs": True,
+        "setup_phase_secs": True,
+        "start_phase_secs": True,
+        "processor_timings": True,
+        "warmup": True,
+    },
+    "transport_timing": {
+        "start_time": True,
+        "bot_connected_secs": True,
+        "client_connected_secs": True,
+    },
+    "latency_breakdown": {
+        "measured_from": True,
+        "total_secs": True,
+        "user_turn_start_time": True,
+        "user_turn_secs": True,
+        "contributions": True,
+        "ttfb": True,
+        "text_aggregation": True,
+        "function_calls": True,
+    },
+    "service_latency": {
+        "kind": True,
+        "processor": True,
+        "model": True,
+        "timestamp": True,
+        "seconds": True,
+        "ttfb_secs": True,
+        "leading_silence_secs": True,
+        "thinking_time_secs": True,
+    },
+    "service_usage": {
+        "kind": True,
+        "processor": True,
+        "model": True,
+        "timestamp": True,
+        "audio_seconds": True,
+        "characters": True,
+        "prompt_tokens": True,
+        "completion_tokens": True,
+        "total_tokens": True,
+        "cache_read_input_tokens": True,
+        "cache_creation_input_tokens": True,
+        "reasoning_tokens": True,
+        "input_audio_tokens": True,
+        "output_audio_tokens": True,
+        "cache_read_input_audio_tokens": True,
+    },
+    "speech_event": {"kind": True, "timestamp": True, "started_at": True},
+    "function_call_event": {
+        "kind": True,
+        "function_name": True,
+        "tool_call_id": True,
+        "group_id": True,
+        "blocking": True,
+        "timestamp": True,
+        "started_at": True,
+        "in_progress_at": True,
+    },
+    "error": {
+        "category": True,
+        "exception_type": True,
+        "processor": True,
+        "processor_usable": True,
+        "timestamp": True,
+    },
+}
 
-    A record is a Pydantic model, so the event's properties are the model's
-    own fields. Values a handler returned are whatever the application made
-    them, so a record that will not serialize is dropped rather than raised
-    into the handler that reported it.
+
+async def _publish_record(event_name: str, record):
+    """Publish the fields `_PUBLISHED_FIELDS` names for this record.
+
+    A record that will not serialize is dropped rather than raised into the
+    handler that reported it.
     """
     try:
-        properties = record.model_dump(mode="json", exclude_none=True)
+        properties = record.model_dump(
+            mode="json", exclude_none=True, include=_PUBLISHED_FIELDS[event_name]
+        )
     except Exception as e:
         logger.warning(f"[pcc-observability] Could not serialize {event_name}: {e}")
         return
