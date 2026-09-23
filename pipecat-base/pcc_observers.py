@@ -19,31 +19,14 @@ failing to start.
 import uuid
 from datetime import datetime, timezone
 from os import environ
-from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 import pcc_structured_logs
 from loguru import logger
 
-_event_publisher_endpoint = environ.get("PIPECAT_EVENT_PUBLISHER_ENDPOINT")
-
-
-def _events_url(endpoint: str | None) -> str | None:
-    """Resolve the endpoint to the publisher's events route.
-
-    The publisher serves POST /events and 404s anything else, so an endpoint
-    configured as a bare host and port is completed here rather than dropping
-    every record.
-    """
-    if not endpoint:
-        return None
-    parts = urlsplit(endpoint)
-    if parts.path.strip("/"):
-        return endpoint
-    return urlunsplit((parts.scheme, parts.netloc, "/events", "", ""))
-
-
-_events_endpoint = _events_url(_event_publisher_endpoint)
+# The full URL records are posted to, route included: the publisher serves
+# POST /events and 404s anything else.
+_events_endpoint = environ.get("PIPECAT_EVENT_PUBLISHER_ENDPOINT")
 _http_session: aiohttp.ClientSession | None = None
 
 

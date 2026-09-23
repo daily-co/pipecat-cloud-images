@@ -71,30 +71,6 @@ class _Unserializable:
         raise TypeError("cannot serialize a socket")
 
 
-def test_a_bare_endpoint_is_completed_to_the_events_route():
-    """The publisher serves POST /events and 404s anything else."""
-    assert (
-        pcc_observers._events_url("http://pipecat-event-publisher:3000")
-        == "http://pipecat-event-publisher:3000/events"
-    )
-    assert (
-        pcc_observers._events_url("http://pipecat-event-publisher:3000/")
-        == "http://pipecat-event-publisher:3000/events"
-    )
-
-
-def test_an_endpoint_that_names_a_route_is_left_alone():
-    assert (
-        pcc_observers._events_url("http://pipecat-event-publisher:3000/events")
-        == "http://pipecat-event-publisher:3000/events"
-    )
-
-
-def test_nothing_is_published_without_an_endpoint():
-    assert pcc_observers._events_url(None) is None
-    assert pcc_observers._events_url("") is None
-
-
 def test_the_envelope_carries_what_the_publisher_requires(posted):
     asyncio.run(pcc_observers._publish_event("speech_event", {"kind": "user_turn_started"}))
 
