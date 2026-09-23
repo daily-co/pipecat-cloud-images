@@ -16,6 +16,7 @@ bot pinned to an older Pipecat reports whatever its version has rather than
 failing to start.
 """
 
+import time
 import uuid
 from datetime import datetime, timezone
 from os import environ
@@ -53,7 +54,7 @@ async def _publish_event(event_name: str, event_properties: dict | None = None):
         return
 
     payload = {
-        "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "ts": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
         "session_id": session_id,
         "event_name": event_name,
         "event_uuid": str(uuid.uuid4()),
@@ -213,7 +214,10 @@ async def _setup_user_bot_latency_observer(worker):
 
     @observer.event_handler("on_latency_measured")
     async def on_latency_measured(observer, latency_seconds):
-        await _publish_event("user_bot_latency", {"latency_secs": round(latency_seconds, 3)})
+        await _publish_event(
+            "user_bot_latency",
+            {"latency_secs": round(latency_seconds, 3), "timestamp": time.time()},
+        )
 
     @observer.event_handler("on_latency_breakdown")
     async def on_latency_breakdown(observer, breakdown):
@@ -222,7 +226,8 @@ async def _setup_user_bot_latency_observer(worker):
     @observer.event_handler("on_first_bot_speech_latency")
     async def on_first_bot_speech_latency(observer, latency_seconds):
         await _publish_event(
-            "first_bot_speech_latency", {"latency_secs": round(latency_seconds, 3)}
+            "first_bot_speech_latency",
+            {"latency_secs": round(latency_seconds, 3), "timestamp": time.time()},
         )
 
     worker.add_observer(observer)
