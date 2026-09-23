@@ -21,6 +21,8 @@ import uuid
 from datetime import datetime, timezone
 from os import environ
 
+# aiohttp is not declared by pipecat-base; it arrives with pipecatcloud, which
+# is.
 import aiohttp
 import pcc_structured_logs
 from loguru import logger
@@ -41,6 +43,14 @@ _counting_for_session: str | None = None
 
 
 def _get_http_session() -> aiohttp.ClientSession:
+    """The session records are posted through, opened on first use.
+
+    It lives as long as the process, which keeps the connection to the
+    publisher open across a pod's sessions. Nothing closes it: the interpreter
+    is on its way out by the time it could, and aiohttp's parting complaint
+    about an unclosed session is the price of not carrying a shutdown hook for
+    a socket the kernel is about to reclaim anyway.
+    """
     global _http_session
     if _http_session is None or _http_session.closed:
         _http_session = aiohttp.ClientSession(
