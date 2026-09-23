@@ -43,7 +43,6 @@ from pipecatcloud.agent import (
     WebSocketSessionArguments,
 )
 from pipecatcloud_system import add_lifespan_to_app, app
-from shared_state import GLOBALS
 from waiting_server import Config, WaitingServer
 
 # ------------------------------------------------------------
@@ -72,6 +71,9 @@ async def _call_readyz_func(func: Callable[[], ReadyzResult]) -> ReadyzResult:
         logger.warning(f"Health check function raised exception: {e}")
         return {"ready": False, "error": str(e)}
 
+
+# Global state dictionary
+GLOBALS = {}
 
 # Initialize feature manager
 feature_manager = FeatureManager()
@@ -367,7 +369,6 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
         "session_id": args.session_id,
         "image_version": image_version,
     }
-    GLOBALS["current_session_id"] = args.session_id
     with (
         logger.contextualize(session_id=args.session_id),
         # Attribute captured print()/stdout output to this session too.

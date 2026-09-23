@@ -14,9 +14,9 @@ import re
 from datetime import datetime, timezone
 
 import pcc_observers
+import pcc_structured_logs
 import pytest
 from pydantic import BaseModel
-from shared_state import GLOBALS
 
 # The publisher's own check, copied from types.ts.
 ISO_8601 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$")
@@ -52,7 +52,7 @@ def posted(monkeypatch):
     session = _Session()
     monkeypatch.setattr(pcc_observers, "_get_http_session", lambda: session)
     monkeypatch.setattr(pcc_observers, "_events_endpoint", "http://publisher:3000/events")
-    monkeypatch.setitem(GLOBALS, "current_session_id", "session-abc")
+    monkeypatch.setattr(pcc_structured_logs, "_current_session_id", "session-abc")
     return session.posts
 
 
@@ -114,6 +114,26 @@ def test_each_event_is_published_under_its_own_uuid(posted):
     asyncio.run(pcc_observers._publish_event("error", {"category": "connectivity"}))
 
     assert posted[0][1]["event_uuid"] != posted[1][1]["event_uuid"]
+
+
+def test_nothing_is_published_outside_a_session(monkeypatch):
+    """A record with no session to name is one nothing can be joined to."""
+    posts = []
+
+    class _Session:
+        closed = False
+
+        def post(self, url, json=None):
+            posts.append(url)
+            return _Response()
+
+    monkeypatch.setattr(pcc_observers, "_get_http_session", lambda: _Session())
+    monkeypatch.setattr(pcc_observers, "_events_endpoint", "http://publisher:3000/events")
+    monkeypatch.setattr(pcc_structured_logs, "_current_session_id", None)
+
+    asyncio.run(pcc_observers._publish_event("error", {"category": "connectivity"}))
+
+    assert posts == []
 
 
 def test_a_record_is_published_as_its_own_fields(posted):
