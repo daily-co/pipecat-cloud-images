@@ -110,15 +110,23 @@ async def _publish_event(event_name: str, event_properties: dict | None = None):
 # Free text stays behind — a tool's arguments and result, the exception its
 # handler raised, a processor's error message — since any of it can quote what
 # was said; `push_error_frame` still logs the message for the bot's own
-# session. Nested timings travel whole: processor names, keys and durations.
+# session.
 _PUBLISHED_FIELDS: dict[str, dict] = {
     "startup_timing": {
         "start_time": True,
         "total_duration_secs": True,
         "setup_phase_secs": True,
         "start_phase_secs": True,
-        "processor_timings": True,
-        "warmup": True,
+        "processor_timings": {
+            "__all__": {
+                "processor_name",
+                "start_offset_secs",
+                "duration_secs",
+                "setup_duration_secs",
+                "start_duration_secs",
+            }
+        },
+        "warmup": {"duration_secs", "blocking_duration_secs"},
     },
     "transport_timing": {
         "start_time": True,
@@ -130,10 +138,12 @@ _PUBLISHED_FIELDS: dict[str, dict] = {
         "total_secs": True,
         "user_turn_start_time": True,
         "user_turn_secs": True,
-        "contributions": True,
-        "ttfb": True,
-        "text_aggregation": True,
-        "function_calls": True,
+        "contributions": {
+            "__all__": {"key", "label", "owner", "owner_kind", "start_time", "duration_secs"}
+        },
+        "ttfb": {"__all__": {"processor", "model", "start_time", "duration_secs"}},
+        "text_aggregation": {"processor", "start_time", "duration_secs"},
+        "function_calls": {"__all__": {"function_name", "start_time", "duration_secs"}},
     },
     "service_latency": {
         "kind": True,
