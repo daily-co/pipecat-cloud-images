@@ -9,11 +9,13 @@ envelope against those rules rather than against our own idea of it.
 
 import asyncio
 import json
+import pathlib
 import re
 from datetime import datetime, timezone
 
 import pcc_observers
 import pytest
+from pydantic import BaseModel
 from shared_state import GLOBALS
 
 # The publisher's own check, copied from types.ts.
@@ -246,3 +248,41 @@ def test_a_pipecat_without_any_of_them_still_starts(monkeypatch):
     asyncio.run(pcc_observers.setup_pipeline_worker(worker))
 
     assert worker.observers == []
+
+
+def test_the_fields_that_can_quote_a_conversation_are_not_published():
+    """What a bot's tools were asked and answered stays with the bot."""
+    published = pcc_observers._PUBLISHED_FIELDS
+    assert "arguments" not in published["function_call_event"]
+    assert "result" not in published["function_call_event"]
+    assert "error" not in published["function_call_event"]
+    assert "message" not in published["error"]
+
+
+def test_every_record_published_names_its_fields():
+    """A record with no field list publishes nothing, silently."""
+    import re
+
+    source = pathlib.Path(pcc_observers.__file__).read_text()
+    published = set(re.findall(r'_publish_record\(\s*"([a-z_]+)"', source))
+
+    assert published, "no _publish_record call sites found"
+    assert published <= set(pcc_observers._PUBLISHED_FIELDS)
+
+
+def test_a_record_publishes_only_what_its_list_names(monkeypatch, posted):
+    """A field the list does not name stays behind, whatever the model holds."""
+
+    class _Record(BaseModel):
+        kind: str
+        transcript: str
+
+    monkeypatch.setitem(pcc_observers._PUBLISHED_FIELDS, "speech_event", {"kind": True})
+
+    asyncio.run(
+        pcc_observers._publish_record(
+            "speech_event", _Record(kind="user_turn_started", transcript="my card number is")
+        )
+    )
+
+    assert posted[0][1]["event_properties"] == {"kind": "user_turn_started"}
