@@ -22,8 +22,8 @@ from os import environ
 from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
+import pcc_structured_logs
 from loguru import logger
-from shared_state import GLOBALS
 
 _event_publisher_endpoint = environ.get("PIPECAT_EVENT_PUBLISHER_ENDPOINT")
 
@@ -57,13 +57,21 @@ def _get_http_session() -> aiohttp.ClientSession:
 
 
 async def _publish_event(event_name: str, event_properties: dict | None = None):
-    """Publish an event to the event publisher endpoint if configured."""
+    """Publish an event to the event publisher endpoint if configured.
+
+    Every observer is attached to a worker inside a session, so a record with
+    no session to name is one nothing can be joined to. It goes no further.
+    """
     if not _events_endpoint:
+        return
+
+    session_id = pcc_structured_logs.current_session()
+    if not session_id:
         return
 
     payload = {
         "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-        "session_id": GLOBALS.get("current_session_id", "NONE"),
+        "session_id": session_id,
         "event_name": event_name,
         "event_uuid": str(uuid.uuid4()),
     }
