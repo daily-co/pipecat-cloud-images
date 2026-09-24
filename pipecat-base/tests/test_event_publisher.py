@@ -10,9 +10,11 @@ envelope against those rules rather than against our own idea of it.
 import asyncio
 import importlib.util
 import json
+import os
 import pathlib
 import re
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pcc_observers
 import pcc_structured_logs
@@ -254,11 +256,18 @@ def test_a_record_stays_within_the_publishers_size_limit():
     assert len(json.dumps(breakdown)) < MAX_EVENT_PROPERTIES_LENGTH
 
 
+class _Pipeline:
+    """An empty pipeline, with nothing nested inside it."""
+
+    processors = []
+
+
 class _Worker:
     """Stands in for the PipelineWorker, recording what was attached."""
 
     def __init__(self):
         self.observers = []
+        self.pipeline = _Pipeline()
 
     def add_observer(self, observer):
         self.observers.append(observer)
@@ -271,6 +280,12 @@ def _pipecat_has(*modules):
         return all(importlib.util.find_spec(m) is not None for m in modules)
     except ImportError:
         return False
+
+
+_AGGREGATORS = "pipecat.processors.aggregators.llm_response_universal"
+_needs_aggregators = pytest.mark.skipif(
+    not _pipecat_has(_AGGREGATORS), reason=f"this pipecat-ai has no {_AGGREGATORS}"
+)
 
 
 def _hide(monkeypatch, *names):
@@ -358,3 +373,149 @@ def test_a_record_publishes_only_what_its_list_names(monkeypatch, posted):
     )
 
     assert posted[0][1]["event_properties"] == {"kind": "user_turn_started"}
+
+
+class _NestedPipeline:
+    """A pipeline holding processors, some of which are pipelines."""
+
+    def __init__(self, *processors):
+        self.processors = list(processors)
+
+
+def _aggregator(base):
+    """A real aggregator by type, without running its constructor."""
+
+    class _Stub(base):
+        processors = []
+
+        def __init__(self):
+            self.handlers = {}
+
+        def event_handler(self, name):
+            def decorator(handler):
+                self.handlers[name] = handler
+                return handler
+
+            return decorator
+
+    return _Stub()
+
+
+def test_the_walk_reaches_processors_nested_in_pipelines():
+    """A bot may put its aggregators inside a pipeline of its own."""
+    deep, shallow = _NestedPipeline(), _NestedPipeline()
+    pipeline = _NestedPipeline(_NestedPipeline(_NestedPipeline(deep)), shallow)
+
+    found = list(pcc_observers._every_processor(pipeline))
+
+    assert deep in found and shallow in found
+
+
+@_needs_aggregators
+def test_transcripts_are_published_for_both_sides(monkeypatch, posted):
+    from pipecat.processors.aggregators.llm_response_universal import (
+        LLMAssistantAggregator,
+        LLMUserAggregator,
+    )
+
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
+    user = _aggregator(LLMUserAggregator)
+    assistant = _aggregator(LLMAssistantAggregator)
+    worker = _Worker()
+    worker.pipeline = _NestedPipeline(_NestedPipeline(user), assistant)
+
+    asyncio.run(pcc_observers._setup_transcripts(worker))
+
+    asyncio.run(
+        user.handlers["on_user_turn_message_added"](
+            user, SimpleNamespace(content="what is the weather", timestamp="2026-09-24T12:00:00Z")
+        )
+    )
+    asyncio.run(
+        assistant.handlers["on_assistant_turn_stopped"](
+            assistant,
+            SimpleNamespace(
+                content="it is nice", interrupted=True, timestamp="2026-09-24T12:00:02Z"
+            ),
+        )
+    )
+
+    assert [p[1]["event_properties"]["role"] for p in posted] == ["user", "assistant"]
+    assert posted[0][1]["event_properties"]["text"] == "what is the weather"
+    assert posted[1][1]["event_properties"]["interrupted"] is True
+
+
+@_needs_aggregators
+def test_a_turn_with_no_words_is_not_a_transcript(monkeypatch, posted):
+    """An assistant turn can be a tool call and nothing else."""
+    from pipecat.processors.aggregators.llm_response_universal import LLMAssistantAggregator
+
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
+    assistant = _aggregator(LLMAssistantAggregator)
+    worker = _Worker()
+    worker.pipeline = _NestedPipeline(assistant)
+
+    asyncio.run(pcc_observers._setup_transcripts(worker))
+    asyncio.run(
+        assistant.handlers["on_assistant_turn_stopped"](
+            assistant,
+            SimpleNamespace(content="", interrupted=False, timestamp="2026-09-24T12:00:02Z"),
+        )
+    )
+
+    assert posted == []
+
+
+def _transcript_setup(monkeypatch, exclude):
+    """Set up transcripts with content excluded or not, returning the aggregator."""
+    from pipecat.processors.aggregators.llm_response_universal import LLMUserAggregator
+
+    user = _aggregator(LLMUserAggregator)
+    worker = _Worker()
+    worker.pipeline = _NestedPipeline(user)
+    monkeypatch.setattr(pcc_observers, "_exclude_content", exclude)
+
+    asyncio.run(pcc_observers._setup_transcripts(worker))
+    return user
+
+
+@_needs_aggregators
+def test_a_deployment_excluding_content_publishes_no_transcript(monkeypatch, posted):
+    """Everything else still travels; only what was said stays behind."""
+    user = _transcript_setup(monkeypatch, exclude=True)
+
+    assert user.handlers == {}
+    assert posted == []
+
+
+@_needs_aggregators
+def test_transcripts_travel_when_content_is_not_excluded(monkeypatch):
+    user = _transcript_setup(monkeypatch, exclude=False)
+
+    assert "on_user_turn_message_added" in user.handlers
+
+
+@pytest.mark.parametrize(
+    "value,excluded",
+    [
+        (None, True),
+        ("", True),
+        ("false", False),
+        ("FALSE", False),
+        (" false ", False),
+        ("true", True),
+        ("True", True),
+        ("1", True),
+        ("anything else", True),
+    ],
+)
+def test_how_the_exclusion_flag_is_read(monkeypatch, value, excluded):
+    """Only an explicit "false" publishes; an agent told nothing withholds."""
+    if value is None:
+        monkeypatch.delenv("PCC_EXCLUDE_CONTENT", raising=False)
+    else:
+        monkeypatch.setenv("PCC_EXCLUDE_CONTENT", value)
+
+    read = os.environ.get("PCC_EXCLUDE_CONTENT", "").strip().lower() != "false"
+
+    assert read is excluded

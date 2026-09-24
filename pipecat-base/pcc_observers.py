@@ -30,6 +30,16 @@ from loguru import logger
 # The full URL records are posted to, route included: the publisher serves
 # POST /events and 404s anything else.
 _events_endpoint = environ.get("PIPECAT_EVENT_PUBLISHER_ENDPOINT")
+
+# Omit transcripts where the platform excludes content. Only an explicit "false"
+# publishes, so an agent the platform never told either way withholds.
+_exclude_content = environ.get("PCC_EXCLUDE_CONTENT", "").strip().lower() != "false"
+
+if _exclude_content:
+    logger.info(
+        "[pcc-observability] transcripts are not published "
+        f"(PCC_EXCLUDE_CONTENT={environ.get('PCC_EXCLUDE_CONTENT')!r})"
+    )
 _http_session: aiohttp.ClientSession | None = None
 
 
@@ -221,6 +231,7 @@ async def _publish_record(event_name: str, record):
 
 async def setup_pipeline_worker(worker):
     """Called by PipelineWorker._load_setup_files() for each worker instance."""
+    await _setup_transcripts(worker)
     await _setup_startup_timing_observer(worker)
     await _setup_user_bot_latency_observer(worker)
     await _setup_service_metrics_observer(worker)
@@ -244,6 +255,72 @@ async def setup_worker_runner(runner):
     do. Pipecat 1.3.0+ offers each PIPECAT_SETUP_FILES entry to the runner as
     well, and logs a warning for a file without this hook, once per session.
     """
+
+
+def _every_processor(processor):
+    """Walk a pipeline, including the processors nested inside it."""
+    for child in processor.processors:
+        yield child
+        yield from _every_processor(child)
+
+
+async def _setup_transcripts(worker):
+    """Publish what was said, from the aggregators that assemble it.
+
+    The transcript is the one record that carries the conversation itself,
+    rather than facts about it. Everything else here names a service, a
+    duration or a kind; this names what a person said, so a deployment the
+    platform marks `PCC_EXCLUDE_CONTENT` gets every record except this one.
+
+    The text arrives from the aggregators rather than from a frame, because
+    they hold the turn: the words a turn ended up with, after the corrections
+    and the interruptions that a stream of frames still has to be assembled
+    into.
+    """
+    if _exclude_content:
+        return
+
+    try:
+        from pipecat.processors.aggregators.llm_response_universal import (
+            LLMAssistantAggregator,
+            LLMUserAggregator,
+        )
+    except ImportError:
+        return
+
+    for processor in _every_processor(worker.pipeline):
+        if isinstance(processor, LLMUserAggregator):
+
+            @processor.event_handler("on_user_turn_message_added")
+            async def on_user_turn_message_added(processor, message):
+                if not message.content:
+                    return
+                await _publish_event(
+                    "transcript",
+                    {
+                        "role": "user",
+                        "text": message.content,
+                        "turn_started_at": message.timestamp,
+                        "timestamp": time.time(),
+                    },
+                )
+
+        elif isinstance(processor, LLMAssistantAggregator):
+
+            @processor.event_handler("on_assistant_turn_stopped")
+            async def on_assistant_turn_stopped(processor, message):
+                if not message.content:
+                    return
+                await _publish_event(
+                    "transcript",
+                    {
+                        "role": "assistant",
+                        "text": message.content,
+                        "interrupted": message.interrupted,
+                        "turn_started_at": message.timestamp,
+                        "timestamp": time.time(),
+                    },
+                )
 
 
 async def _setup_startup_timing_observer(worker):
