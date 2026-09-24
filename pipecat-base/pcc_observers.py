@@ -221,6 +221,7 @@ async def _publish_record(event_name: str, record):
 
 async def setup_pipeline_worker(worker):
     """Called by PipelineWorker._load_setup_files() for each worker instance."""
+    await _setup_transcripts(worker)
     await _setup_startup_timing_observer(worker)
     await _setup_user_bot_latency_observer(worker)
     await _setup_service_metrics_observer(worker)
@@ -235,6 +236,69 @@ async def setup_pipeline_worker(worker):
 # warning-free across versions. Drop this alias once the minimum supported
 # Pipecat is >= 1.4.0.
 setup_pipeline_task = setup_pipeline_worker
+
+
+def _every_processor(processor):
+    """Walk a pipeline, including the processors nested inside it."""
+    for child in processor.processors:
+        yield child
+        yield from _every_processor(child)
+
+
+async def _setup_transcripts(worker):
+    """Publish what was said, from the aggregators that assemble it.
+
+    The transcript is the one record that carries the conversation itself,
+    rather than facts about it. Everything else here names a service, a
+    duration or a kind; this names what a person said, and is governed by the
+    same controls as the application logs that already carry it.
+
+    The text arrives from the aggregators rather than from a frame, because
+    they hold the turn: the words a turn ended up with, after the corrections
+    and the interruptions that a stream of frames still has to be assembled
+    into.
+    """
+    try:
+        from pipecat.processors.aggregators.llm_response_universal import (
+            LLMAssistantAggregator,
+            LLMUserAggregator,
+        )
+    except ImportError:
+        return
+
+    for processor in _every_processor(worker.pipeline):
+        if isinstance(processor, LLMUserAggregator):
+
+            @processor.event_handler("on_user_turn_message_added")
+            async def on_user_turn_message_added(processor, message):
+                if not message.content:
+                    return
+                await _publish_event(
+                    "transcript",
+                    {
+                        "role": "user",
+                        "text": message.content,
+                        "turn_started_at": message.timestamp,
+                        "timestamp": time.time(),
+                    },
+                )
+
+        elif isinstance(processor, LLMAssistantAggregator):
+
+            @processor.event_handler("on_assistant_turn_stopped")
+            async def on_assistant_turn_stopped(processor, message):
+                if not message.content:
+                    return
+                await _publish_event(
+                    "transcript",
+                    {
+                        "role": "assistant",
+                        "text": message.content,
+                        "interrupted": message.interrupted,
+                        "turn_started_at": message.timestamp,
+                        "timestamp": time.time(),
+                    },
+                )
 
 
 async def _setup_startup_timing_observer(worker):

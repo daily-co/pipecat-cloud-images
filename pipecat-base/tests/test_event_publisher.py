@@ -12,6 +12,7 @@ import json
 import pathlib
 import re
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pcc_observers
 import pcc_structured_logs
@@ -253,11 +254,18 @@ def test_a_record_stays_within_the_publishers_size_limit():
     assert len(json.dumps(breakdown)) < MAX_EVENT_PROPERTIES_LENGTH
 
 
+class _Pipeline:
+    """An empty pipeline, with nothing nested inside it."""
+
+    processors = []
+
+
 class _Worker:
     """Stands in for the PipelineWorker, recording what was attached."""
 
     def __init__(self):
         self.observers = []
+        self.pipeline = _Pipeline()
 
     def add_observer(self, observer):
         self.observers.append(observer)
@@ -341,3 +349,90 @@ def test_a_record_publishes_only_what_its_list_names(monkeypatch, posted):
     )
 
     assert posted[0][1]["event_properties"] == {"kind": "user_turn_started"}
+
+
+class _NestedPipeline:
+    """A pipeline holding processors, some of which are pipelines."""
+
+    def __init__(self, *processors):
+        self.processors = list(processors)
+
+
+def _aggregator(base):
+    """A real aggregator by type, without running its constructor."""
+
+    class _Stub(base):
+        processors = []
+
+        def __init__(self):
+            self.handlers = {}
+
+        def event_handler(self, name):
+            def decorator(handler):
+                self.handlers[name] = handler
+                return handler
+
+            return decorator
+
+    return _Stub()
+
+
+def test_the_walk_reaches_processors_nested_in_pipelines():
+    """A bot may put its aggregators inside a pipeline of its own."""
+    deep, shallow = _NestedPipeline(), _NestedPipeline()
+    pipeline = _NestedPipeline(_NestedPipeline(_NestedPipeline(deep)), shallow)
+
+    found = list(pcc_observers._every_processor(pipeline))
+
+    assert deep in found and shallow in found
+
+
+def test_transcripts_are_published_for_both_sides(posted):
+    from pipecat.processors.aggregators.llm_response_universal import (
+        LLMAssistantAggregator,
+        LLMUserAggregator,
+    )
+
+    user = _aggregator(LLMUserAggregator)
+    assistant = _aggregator(LLMAssistantAggregator)
+    worker = _Worker()
+    worker.pipeline = _NestedPipeline(_NestedPipeline(user), assistant)
+
+    asyncio.run(pcc_observers._setup_transcripts(worker))
+
+    asyncio.run(
+        user.handlers["on_user_turn_message_added"](
+            user, SimpleNamespace(content="what is the weather", timestamp="2026-09-24T12:00:00Z")
+        )
+    )
+    asyncio.run(
+        assistant.handlers["on_assistant_turn_stopped"](
+            assistant,
+            SimpleNamespace(
+                content="it is nice", interrupted=True, timestamp="2026-09-24T12:00:02Z"
+            ),
+        )
+    )
+
+    assert [p[1]["event_properties"]["role"] for p in posted] == ["user", "assistant"]
+    assert posted[0][1]["event_properties"]["text"] == "what is the weather"
+    assert posted[1][1]["event_properties"]["interrupted"] is True
+
+
+def test_a_turn_with_no_words_is_not_a_transcript(posted):
+    """An assistant turn can be a tool call and nothing else."""
+    from pipecat.processors.aggregators.llm_response_universal import LLMAssistantAggregator
+
+    assistant = _aggregator(LLMAssistantAggregator)
+    worker = _Worker()
+    worker.pipeline = _NestedPipeline(assistant)
+
+    asyncio.run(pcc_observers._setup_transcripts(worker))
+    asyncio.run(
+        assistant.handlers["on_assistant_turn_stopped"](
+            assistant,
+            SimpleNamespace(content="", interrupted=False, timestamp="2026-09-24T12:00:02Z"),
+        )
+    )
+
+    assert posted == []
