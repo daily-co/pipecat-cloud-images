@@ -30,6 +30,12 @@ from loguru import logger
 # The full URL records are posted to, route included: the publisher serves
 # POST /events and 404s anything else.
 _events_endpoint = environ.get("PIPECAT_EVENT_PUBLISHER_ENDPOINT")
+
+# Omit transcripts where the platform excludes content; anything but "false" excludes.
+_exclude_content = environ.get("PCC_EXCLUDE_CONTENT", "").strip().lower() not in ("", "false")
+
+if _exclude_content:
+    logger.info("[pcc-observability] PCC_EXCLUDE_CONTENT is set: transcripts are not published")
 _http_session: aiohttp.ClientSession | None = None
 
 
@@ -250,14 +256,17 @@ async def _setup_transcripts(worker):
 
     The transcript is the one record that carries the conversation itself,
     rather than facts about it. Everything else here names a service, a
-    duration or a kind; this names what a person said, and is governed by the
-    same controls as the application logs that already carry it.
+    duration or a kind; this names what a person said, so a deployment the
+    platform marks `PCC_EXCLUDE_CONTENT` gets every record except this one.
 
     The text arrives from the aggregators rather than from a frame, because
     they hold the turn: the words a turn ended up with, after the corrections
     and the interruptions that a stream of frames still has to be assembled
     into.
     """
+    if _exclude_content:
+        return
+
     try:
         from pipecat.processors.aggregators.llm_response_universal import (
             LLMAssistantAggregator,

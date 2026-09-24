@@ -30,7 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whether an assistant turn was interrupted. The text comes from the context
   aggregators, so it is the turn as the LLM received it rather than a stream
   of partial transcriptions, and a turn that produced no words is not
-  published. This is the one record that carries the conversation itself.
+  published. This is the one record that carries the conversation itself, so a
+  deployment the platform marks `PCC_EXCLUDE_CONTENT` gets every other record
+  without it.
 
 ### Removed
 

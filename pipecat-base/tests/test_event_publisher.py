@@ -9,6 +9,7 @@ envelope against those rules rather than against our own idea of it.
 
 import asyncio
 import json
+import os
 import pathlib
 import re
 from datetime import datetime, timezone
@@ -436,3 +437,56 @@ def test_a_turn_with_no_words_is_not_a_transcript(posted):
     )
 
     assert posted == []
+
+
+def _transcript_setup(monkeypatch, exclude):
+    """Set up transcripts with content excluded or not, returning the aggregator."""
+    from pipecat.processors.aggregators.llm_response_universal import LLMUserAggregator
+
+    user = _aggregator(LLMUserAggregator)
+    worker = _Worker()
+    worker.pipeline = _NestedPipeline(user)
+    monkeypatch.setattr(pcc_observers, "_exclude_content", exclude)
+
+    asyncio.run(pcc_observers._setup_transcripts(worker))
+    return user
+
+
+def test_a_deployment_excluding_content_publishes_no_transcript(monkeypatch, posted):
+    """Everything else still travels; only what was said stays behind."""
+    user = _transcript_setup(monkeypatch, exclude=True)
+
+    assert user.handlers == {}
+    assert posted == []
+
+
+def test_transcripts_travel_when_content_is_not_excluded(monkeypatch):
+    user = _transcript_setup(monkeypatch, exclude=False)
+
+    assert "on_user_turn_message_added" in user.handlers
+
+
+@pytest.mark.parametrize(
+    "value,excluded",
+    [
+        (None, False),
+        ("", False),
+        ("false", False),
+        ("FALSE", False),
+        (" false ", False),
+        ("true", True),
+        ("True", True),
+        ("1", True),
+        ("anything else", True),
+    ],
+)
+def test_how_the_exclusion_flag_is_read(monkeypatch, value, excluded):
+    """The platform sets true or false; anything else excludes."""
+    if value is None:
+        monkeypatch.delenv("PCC_EXCLUDE_CONTENT", raising=False)
+    else:
+        monkeypatch.setenv("PCC_EXCLUDE_CONTENT", value)
+
+    read = os.environ.get("PCC_EXCLUDE_CONTENT", "").strip().lower() not in ("", "false")
+
+    assert read is excluded
