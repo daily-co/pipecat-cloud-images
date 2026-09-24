@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Function call arguments and results are not published: what a bot's tools
   were asked and answered belongs to the bot, not to the platform running it.
 
+- A session's transcript is published too, as a `transcript` record for each
+  turn: the role, the text the turn ended up with, when the turn started, and
+  whether an assistant turn was interrupted. The text comes from the context
+  aggregators, so it is the turn as the LLM received it rather than a stream
+  of partial transcriptions, and a turn that produced no words is not
+  published. This is the one record that carries the conversation itself.
+
 ### Removed
 
 - The `[pcc-observability]` log lines reporting startup timing and turn
