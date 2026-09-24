@@ -36,7 +36,10 @@ _events_endpoint = environ.get("PIPECAT_EVENT_PUBLISHER_ENDPOINT")
 _exclude_content = environ.get("PCC_EXCLUDE_CONTENT", "").strip().lower() != "false"
 
 if _exclude_content:
-    logger.info("[pcc-observability] PCC_EXCLUDE_CONTENT is set: transcripts are not published")
+    logger.info(
+        "[pcc-observability] transcripts are not published "
+        f"(PCC_EXCLUDE_CONTENT={environ.get('PCC_EXCLUDE_CONTENT')!r})"
+    )
 _http_session: aiohttp.ClientSession | None = None
 
 
