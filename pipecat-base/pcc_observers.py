@@ -31,8 +31,9 @@ from loguru import logger
 # POST /events and 404s anything else.
 _events_endpoint = environ.get("PIPECAT_EVENT_PUBLISHER_ENDPOINT")
 
-# Omit transcripts where the platform excludes content; anything but "false" excludes.
-_exclude_content = environ.get("PCC_EXCLUDE_CONTENT", "").strip().lower() not in ("", "false")
+# Omit transcripts where the platform excludes content. Only an explicit "false"
+# publishes, so an agent the platform never told either way withholds.
+_exclude_content = environ.get("PCC_EXCLUDE_CONTENT", "").strip().lower() != "false"
 
 if _exclude_content:
     logger.info("[pcc-observability] PCC_EXCLUDE_CONTENT is set: transcripts are not published")
