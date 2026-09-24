@@ -388,12 +388,13 @@ def test_the_walk_reaches_processors_nested_in_pipelines():
     assert deep in found and shallow in found
 
 
-def test_transcripts_are_published_for_both_sides(posted):
+def test_transcripts_are_published_for_both_sides(monkeypatch, posted):
     from pipecat.processors.aggregators.llm_response_universal import (
         LLMAssistantAggregator,
         LLMUserAggregator,
     )
 
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
     user = _aggregator(LLMUserAggregator)
     assistant = _aggregator(LLMAssistantAggregator)
     worker = _Worker()
@@ -420,10 +421,11 @@ def test_transcripts_are_published_for_both_sides(posted):
     assert posted[1][1]["event_properties"]["interrupted"] is True
 
 
-def test_a_turn_with_no_words_is_not_a_transcript(posted):
+def test_a_turn_with_no_words_is_not_a_transcript(monkeypatch, posted):
     """An assistant turn can be a tool call and nothing else."""
     from pipecat.processors.aggregators.llm_response_universal import LLMAssistantAggregator
 
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
     assistant = _aggregator(LLMAssistantAggregator)
     worker = _Worker()
     worker.pipeline = _NestedPipeline(assistant)
@@ -469,8 +471,8 @@ def test_transcripts_travel_when_content_is_not_excluded(monkeypatch):
 @pytest.mark.parametrize(
     "value,excluded",
     [
-        (None, False),
-        ("", False),
+        (None, True),
+        ("", True),
         ("false", False),
         ("FALSE", False),
         (" false ", False),
@@ -481,12 +483,12 @@ def test_transcripts_travel_when_content_is_not_excluded(monkeypatch):
     ],
 )
 def test_how_the_exclusion_flag_is_read(monkeypatch, value, excluded):
-    """The platform sets true or false; anything else excludes."""
+    """Only an explicit "false" publishes; an agent told nothing withholds."""
     if value is None:
         monkeypatch.delenv("PCC_EXCLUDE_CONTENT", raising=False)
     else:
         monkeypatch.setenv("PCC_EXCLUDE_CONTENT", value)
 
-    read = os.environ.get("PCC_EXCLUDE_CONTENT", "").strip().lower() not in ("", "false")
+    read = os.environ.get("PCC_EXCLUDE_CONTENT", "").strip().lower() != "false"
 
     assert read is excluded
