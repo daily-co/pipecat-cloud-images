@@ -29,6 +29,9 @@ RUN VENV_SITE_PACKAGES=$(/app/.venv/bin/python -c "import site; print(site.getsi
     ln -s /krisp/python/pipecat_ai_krisp ${VENV_SITE_PACKAGES}/pipecat_ai_krisp && \
     echo "/opt/krisp_viva/krisp_audio" > ${VENV_SITE_PACKAGES}/krisp_viva.pth
 
+# Third-party license notice, alongside Debian's per-package copyright files
+COPY ./THIRD_PARTY_NOTICES.md /usr/share/doc/pipecat-base/THIRD_PARTY_NOTICES.md
+
 # Copy application files
 COPY ./app.py ./waiting_server.py ./pipecatcloud_system.py ./feature_manager.py ./pcc_observers.py ./pcc_structured_logs.py ./pcc_early_sigterm.py /app/
 
