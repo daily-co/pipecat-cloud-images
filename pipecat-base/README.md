@@ -116,6 +116,14 @@ To release a new version of the base image:
 
    Then open a PR from `release/vX.Y.Z` to `main`. After approval and merge, GitHub Actions will automatically build and publish the new version.
 
+## Third-Party Software
+
+The image is built on Debian 13 with Python and uv, and includes the Python
+packages in `/app/.venv`. Their licenses ship in the image, and
+[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md), also at
+`/usr/share/doc/pipecat-base/THIRD_PARTY_NOTICES.md` in the image, says where
+to find each license and the Debian source.
+
 ## More Information
 
 For detailed documentation on agent development:
