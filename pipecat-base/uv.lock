@@ -1,6 +1,10 @@
 version = 1
 revision = 3
 requires-python = ">=3.10"
+resolution-markers = [
+    "python_full_version >= '3.11'",
+    "python_full_version < '3.11'",
+]
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -277,7 +281,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -984,14 +988,15 @@ wheels = [
 
 [[package]]
 name = "pipecat-base"
-version = "0.1.31"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi", extra = ["standard"] },
     { name = "loguru" },
     { name = "nltk" },
     { name = "pip" },
-    { name = "pipecatcloud" },
+    { name = "pipecatcloud", version = "0.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pipecatcloud", version = "1.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 
 [package.metadata]
@@ -1000,7 +1005,8 @@ requires-dist = [
     { name = "loguru", specifier = "~=0.7.3" },
     { name = "nltk", specifier = ">=3.10.0,<4" },
     { name = "pip", specifier = ">=26.1" },
-    { name = "pipecatcloud", specifier = ">=0.4.4" },
+    { name = "pipecatcloud", marker = "python_full_version < '3.11'", specifier = "==0.4.4" },
+    { name = "pipecatcloud", marker = "python_full_version >= '3.11'", specifier = ">=1.2.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -1010,6 +1016,9 @@ dev = []
 name = "pipecatcloud"
 version = "0.4.4"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.11'",
+]
 dependencies = [
     { name = "aiohttp" },
     { name = "fastapi" },
@@ -1024,6 +1033,29 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/4a/0d/905bd00fee20d25401b3d35a497f15e14f5eedacc7ae0d21b2296eb90cae/pipecatcloud-0.4.4.tar.gz", hash = "sha256:22d7b0cd1cbeb3043673fb39d8824046fa485407fec7e8d6f7ed3013025d57d4", size = 283039, upload-time = "2026-04-10T13:02:56.668Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a2/c6/6131013ae3c5852296ade465aaa19f81fa3ffe4a23600879050097259e90/pipecatcloud-0.4.4-py3-none-any.whl", hash = "sha256:ece179d2b994811267d0ffb3a7fd12ab754ea0a5df606b8670188a32ab3dc404", size = 77091, upload-time = "2026-04-10T13:02:55.462Z" },
+]
+
+[[package]]
+name = "pipecatcloud"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.11'",
+]
+dependencies = [
+    { name = "aiohttp" },
+    { name = "fastapi" },
+    { name = "loguru" },
+    { name = "python-dotenv" },
+    { name = "questionary" },
+    { name = "synchronicity" },
+    { name = "toml" },
+    { name = "typer" },
+    { name = "uvicorn" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7e/df/e129eee6517df8b570c229f6e5030fa671ef4b7d85acdf0d0c3c785d4380/pipecatcloud-1.2.0.tar.gz", hash = "sha256:f7fc5deedc12a8df4e98e127f1537b72e00710364f4dffc221b6c4baa3a51eb7", size = 337639, upload-time = "2026-08-27T20:23:26.398Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9d/49/2fa5cdff1978a326e76a483fd186861ba4f6eff6a3658dea38352f172695/pipecatcloud-1.2.0-py3-none-any.whl", hash = "sha256:64af53d389d8fb9809cb41e85245af097de3c107b285930c0614d28a00cd44f8", size = 117337, upload-time = "2026-08-27T20:23:24.917Z" },
 ]
 
 [[package]]

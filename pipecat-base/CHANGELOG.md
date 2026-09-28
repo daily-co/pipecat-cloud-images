@@ -5,6 +5,62 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-09-28
+
+### Changed
+
+- **Breaking:** the image now requires pipecat-ai 0.0.78 or newer. When the
+  agent starts, it checks that pipecat-ai is installed and has runner
+  arguments before importing your `bot.py`, and that the session arguments it
+  passes to `bot()` build right after. It refuses to start if either fails,
+  for example with no pipecat-ai, with a release older than 0.0.77, or with
+  0.0.77 under pipecatcloud 0.4.4, which the Python 3.10 image ships. It stops
+  with one line saying why, for example:
+
+  ```
+  Refusing to start: pipecat-ai 0.0.76 is too old for this image, which needs pipecat-ai 0.0.78 or newer: upgrade pipecat-ai in the agent image and deploy again.
+  ```
+
+  The container exits with that line on stderr, after `CRITICAL:`, and as its
+  termination message, so the new deployment never becomes ready. Raise
+  pipecat-ai in your requirements and deploy again. Before this release,
+  pipecat-ai 0.0.77 started but failed every session, and releases older than
+  that ran on pipecatcloud's own stand-ins for pipecat's session types, which
+  this image no longer accepts.
+
+- Images for Python 3.11 and newer now ship pipecatcloud 1.2.0, up from 0.4.4.
+  The Python 3.10 image keeps 0.4.4, the last pipecatcloud release that runs
+  on it; pipecatcloud 1.x and pipecat-ai 1.x both need Python 3.11. If your bot
+  imports `SmallWebRTCRunnerArguments` from the top-level `pipecatcloud`
+  package, import `SmallWebRTCSessionArguments` from `pipecatcloud.agent`
+  instead. An agent image that pins its own pipecatcloud version is
+  unaffected by this move.
+
+### Deprecated
+
+- pipecat-ai older than 0.0.91. It works on this image, which logs a warning
+  at startup naming the installed version; a future release will require
+  0.0.91 or newer.
+- An agent image pinning pipecatcloud 0.1.2 to 0.2.0, whose
+  `WebSocketSessionArguments` does not take the request body. It works on
+  this image, which logs a warning at startup; a future release will require
+  0.2.1 or newer.
+
+### Fixed
+
+- On pipecat-ai 0.0.78 to 0.0.90, sessions started without a Daily room (a
+  plain HTTP start, and SmallWebRTC) failed as soon as they arrived, and so
+  did WebSocket sessions on 0.0.78 to 0.0.84, and on any release under an
+  agent image pinning pipecatcloud 0.1.2 to 0.2.0: the image passed `body`
+  to session-argument types that did not accept it. They now start, and the
+  bot reads `runner_args.body` as it does on any other release.
+- With the structured log lane on, a bot module that imported `pipecatcloud`
+  sent the log capture into a loop: importing pipecatcloud puts a logging
+  handler on stderr, which the capture had already redirected into itself, so
+  each captured line was logged back into the capture. It flooded stderr and
+  could stall the agent's startup for good. The image now imports
+  `pipecatcloud` before the capture begins.
+
 ## [0.1.31] - 2026-09-22
 
 ### Added

@@ -185,6 +185,41 @@ def _serialize(record) -> str:
         return json.dumps(marker)
 
 
+def write_record(level: str, line: str) -> None:
+    """Append one app-lane record to bot.jsonl without going through loguru.
+
+    For a line that must reach the lane whatever loguru's handlers are at that
+    moment: a bot module may have replaced them, and before ``install()`` the
+    file sink does not exist yet. One ``os.write`` of one JSON line, no
+    Python-level lock. No-op when the lane is off; an unwritable directory is
+    ignored.
+    """
+    if not _log_dir:
+        return
+    payload = {
+        "@timestamp": datetime.now().astimezone().isoformat(),
+        "stream": "app",
+        "level": level,
+    }
+    if _current_session_id:
+        payload["session_id"] = _current_session_id
+    payload["line"] = line
+    data = (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode(
+        "utf-8", errors="backslashreplace"
+    )
+    try:
+        os.makedirs(_log_dir, exist_ok=True)
+        fd = os.open(
+            os.path.join(_log_dir, _LOG_FILE_NAME), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644
+        )
+        try:
+            _write_all(fd, data)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+
 def _format_record(record) -> str:
     # Loguru custom-serialization recipe: stash the serialized payload on the
     # record and reference it from the (brace-safe) format template.
@@ -284,6 +319,24 @@ def _write_all(fd: int, data: bytes):
         view = view[written:]
 
 
+def _route_loguru():
+    # Loguru's default sink writes to sys.stderr, which is about to become a
+    # captured pipe — that would echo every captured line back into the
+    # capture (unbounded recursion). Replace it with a bootstrap console sink
+    # on the saved stream + the file sink, so lines emitted before app.py's
+    # own logger setup (e.g. during bot import) are visible and shipped.
+    # app.py's logger.remove()/add() later replaces both, preserving today's
+    # sink-reset semantics.
+    logger.remove()
+    logger.add(
+        _console_stream,
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
+        level=environ.get("PIPECAT_LOG_LEVEL", "DEBUG").upper(),
+        filter=console_filter,
+    )
+    add_file_sink(logger, environ.get("PIPECAT_LOG_LEVEL", "DEBUG").upper())
+
+
 def _pump(read_fd: int, passthrough_fd: int, stream_name: str):
     assembler = _LineAssembler()
     bound = logger.bind(pcc_stream=stream_name)
@@ -302,11 +355,16 @@ def _pump(read_fd: int, passthrough_fd: int, stream_name: str):
             bound.info(line)
 
 
-def install():
+def install(before_capture=None):
     """Capture stdout/stderr and route loguru off the captured descriptors.
 
     Must run before the customer's bot module is imported (it may print at
     import time). No-op when PCC_LOG_DIR is unset or already installed.
+
+    ``before_capture`` runs once the capture is certain, with loguru already
+    routed here but stderr not yet captured: for an import that puts a loguru
+    handler on ``sys.stderr``, which after the capture is its own pipe. Its
+    handler is replaced before the capture starts.
     """
     global _installed, _console_stream
     if not _log_dir or _installed:
@@ -327,21 +385,11 @@ def install():
     saved_stderr = os.dup(2)
     _console_stream = os.fdopen(os.dup(2), "w", buffering=1, encoding="utf-8", errors="replace")
 
-    # Loguru's default sink writes to sys.stderr, which is about to become a
-    # captured pipe — that would echo every captured line back into the
-    # capture (unbounded recursion). Replace it with a bootstrap console sink
-    # on the saved stream + the file sink, so lines emitted before app.py's
-    # own logger setup (e.g. during bot import) are visible and shipped.
-    # app.py's logger.remove()/add() later replaces both, preserving today's
-    # sink-reset semantics.
-    logger.remove()
-    logger.add(
-        _console_stream,
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
-        level=environ.get("PIPECAT_LOG_LEVEL", "DEBUG").upper(),
-        filter=console_filter,
-    )
-    add_file_sink(logger, environ.get("PIPECAT_LOG_LEVEL", "DEBUG").upper())
+    _route_loguru()
+    if before_capture is not None:
+        # What it logs is shipped; the handlers it leaves are replaced.
+        before_capture()
+        _route_loguru()
 
     for fd, saved_fd, name in ((1, saved_stdout, "stdout"), (2, saved_stderr, "stderr")):
         read_fd, write_fd = os.pipe()

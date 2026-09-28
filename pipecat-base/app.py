@@ -8,12 +8,21 @@ import pcc_early_sigterm
 # right before the server starts.
 pcc_early_sigterm.install()
 
+import pcc_pipecat_compat
 import pcc_structured_logs
 
 # Structured log capture (no-op unless PCC_LOG_DIR is set) must install before
 # the customer's bot module is imported below — bot code may print at import
 # time, and those lines must flow through the capture to reach the log lane.
-pcc_structured_logs.install()
+# pipecatcloud is imported just before the capture starts (see
+# preload_pipecatcloud); without a capture nothing may touch loguru before the
+# bot module, which may remove the default handler at import.
+pcc_structured_logs.install(before_capture=pcc_pipecat_compat.preload_pipecatcloud)
+
+# An image whose pipecat-ai cannot serve a session refuses to start, with the
+# reason, rather than failing each session once it serves. pipecat-ai itself
+# is checked here, before the bot module; the session types right after it.
+pcc_pipecat_compat.check_pipecat()
 
 import asyncio
 import base64
@@ -31,6 +40,13 @@ from typing import Annotated, Callable, Dict, List, Optional, Union
 import aiohttp
 import bot as bot_module
 from bot import bot
+
+# Before app.py imports the session types below, so a pipecatcloud that cannot
+# load them with this pipecat-ai is refused with the reason (a bot module that
+# imports them itself has already failed above, with the traceback).
+# Deprecation warnings are logged once logging is set up below.
+_pipecat_deprecations = pcc_pipecat_compat.check_session_types()
+
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request, WebSocket
 from fastapi.responses import JSONResponse
 from fastapi.websockets import WebSocketState
@@ -109,6 +125,9 @@ logger.add(
 # Structured JSONL file sink for the log-collection lane (no-op when disabled).
 pcc_structured_logs.add_file_sink(logger, log_level)
 logger.configure(extra={"session_id": "NONE"})
+
+for _deprecation in _pipecat_deprecations:
+    logger.warning(_deprecation)
 
 
 # Filter out noisy Kubernetes probe requests from uvicorn access logs
@@ -547,14 +566,16 @@ async def handle_bot_request(
     body, flow_config = _split_start_envelope(body, x_pcc_start_envelope)
 
     if x_daily_room_url and x_daily_room_token:
-        args = DailySessionArguments(
+        args = pcc_pipecat_compat.build(
+            DailySessionArguments,
             session_id=x_daily_session_id,
             room_url=x_daily_room_url,
             token=x_daily_room_token,
             body=body,
         )
     else:
-        args = PipecatSessionArguments(
+        args = pcc_pipecat_compat.build(
+            PipecatSessionArguments,
             session_id=x_daily_session_id,
             body=body,
         )
@@ -606,7 +627,8 @@ async def handle_websocket(
         except (base64.binascii.Error, UnicodeDecodeError, json.JSONDecodeError) as e:
             logger.error(f"Failed to decode body parameter: {e}")
 
-    args = WebSocketSessionArguments(
+    args = pcc_pipecat_compat.build(
+        WebSocketSessionArguments,
         session_id=x_daily_session_id,
         websocket=ws,
         body=decoded_body,
@@ -705,7 +727,8 @@ def setup_smallwebrtc_routes():
         request = SmallWebRTCRequest.from_dict(body)
 
         async def webrtc_connection_callback(connection):
-            runner_args = SmallWebRTCSessionArguments(
+            runner_args = pcc_pipecat_compat.build(
+                SmallWebRTCSessionArguments,
                 session_id=x_daily_session_id,
                 webrtc_connection=connection,
                 body=request.request_data,
@@ -826,7 +849,8 @@ def setup_whatsapp_routes(get_ice_config_func):
             logger.debug(
                 f"WhatsApp connection_callback invoked: session_id={x_daily_session_id} caller={caller}"
             )
-            runner_args = SmallWebRTCSessionArguments(
+            runner_args = pcc_pipecat_compat.build(
+                SmallWebRTCSessionArguments,
                 session_id=x_daily_session_id,
                 webrtc_connection=connection,
                 body=call,

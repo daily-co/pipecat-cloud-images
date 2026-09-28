@@ -6,14 +6,18 @@ on:
   pull_request:
     branches: ['main']
 
+permissions:
+  contents: read
+
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        # setup-uv publishes no moving major tags since v8, so it is pinned.
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
 
       - name: Sync dependencies
         run: uv sync
@@ -24,5 +28,57 @@ jobs:
       - name: Ruff lint
         run: uv run ruff check
 
+  python-versions:
+    runs-on: ubuntu-latest
+    outputs:
+      python-versions: ${{ steps.get.outputs.python-versions }}
+      default-python: ${{ steps.get.outputs.default-python }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: get
+        # The Python versions the images are built for, as docker-publish reads them.
+        run: |
+          echo "python-versions=$(yq '.base.python_versions | @json' versions.yaml)" >> "$GITHUB_OUTPUT"
+          echo "default-python=$(yq '.base.default_python' versions.yaml)" >> "$GITHUB_OUTPUT"
+
+  test:
+    # The suite runs against the lock each image ships (its pipecatcloud differs
+    # by Python), with the customer's pipecat-ai layered over it: the oldest the
+    # image supports, and the newest that Python can install.
+    name: test (Python ${{ matrix.python-version }}, pipecat-ai ${{ matrix.pipecat }})
+    needs: python-versions
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(needs.python-versions.outputs.python-versions) }}
+        pipecat: [floor, latest]
+        include:
+          - pipecat: floor
+            pipecat-spec: pipecat-ai==0.0.78
+          - pipecat: latest
+            pipecat-spec: pipecat-ai
+          # The first release whose runner arguments take `body`, where the
+          # image stops building session arguments through its fallback.
+          - python-version: ${{ needs.python-versions.outputs.default-python }}
+            pipecat: '0.0.91'
+            pipecat-spec: pipecat-ai==0.0.91
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          # Legs share a Python and a lock, so each needs its own cache key.
+          cache-suffix: ${{ matrix.pipecat }}
+
       - name: Pytest
-        run: uv run pytest -q
+        env:
+          PIPECAT_SPEC: ${{ matrix.pipecat-spec }}
+        run: >-
+          uv run --project pipecat-base --locked --no-dev
+          --with 'pytest~=8.4' --with "$PIPECAT_SPEC"
+          pytest -q
