@@ -16,7 +16,9 @@ failing every session behind healthy probes:
   session type builds, the way the handlers build it. Importing pipecatcloud
   replaces loguru's handlers (its ``__init__`` removes them all and adds one
   on stderr), which a bot module that removes the default handler at import
-  would trip over, so this waits until the bot module has run.
+  would trip over, so this waits until the bot module has run. An optional
+  type (SmallWebRTC's) that does not build refuses nothing: app.py serves
+  without it, as it does when the type is absent, and logs why.
 
 Both decide by what works, never by version number: pipecat-ai 0.0.77 builds
 on pipecatcloud 1.x but not on 0.4.4 (the Python 3.10 image's), and a fork or
@@ -27,7 +29,7 @@ only.
 ``body`` to its base runner arguments in 0.0.91; before that, passing it to
 the constructor fails for most of the types, so there ``build()`` sets it after
 construction instead, the way ``flow_config`` is attached. A later release will
-drop that fallback, so ``check_session_types()`` returns a deprecation warning
+drop that fallback, so ``check_session_types()`` reports a deprecation warning
 for app.py to log once logging is set up: for a pipecat-ai older than 0.0.91,
 and for a pipecatcloud older than 0.2.1, whose own WebSocket type takes no
 ``body`` whatever pipecat-ai is.
@@ -58,7 +60,7 @@ import os
 import re
 import sys
 import time
-from typing import Any, Callable, List, NoReturn, Optional
+from typing import Any, Callable, Dict, List, NoReturn, Optional
 
 import pcc_structured_logs
 
@@ -90,8 +92,10 @@ _MAX_DETAIL_CHARS = 300
 # while importing reaches the capture lane before a refusal ends the process.
 _PUMP_BEAT_SECONDS = 0.05
 
-# The runner types pipecatcloud's session types are built on; all arrived in
-# pipecat-ai 0.0.77.
+# The runner types pipecatcloud's session types are built on. All four arrived
+# together with their module in pipecat-ai 0.0.77, so a release without the
+# module is too old, and one whose module lacks a type is not: it is later, or
+# a fork.
 _RUNNER_TYPES = (
     "RunnerArguments",
     "DailyRunnerArguments",
@@ -99,15 +103,22 @@ _RUNNER_TYPES = (
     "SmallWebRTCRunnerArguments",
 )
 
+# Stands in for the connection objects a real session passes.
+_PROBE = object()
+
 # The session types the handlers build, whether app.py cannot start without
-# them, and the fields each handler passes besides ``body``. SmallWebRTC is
-# imported only when that feature is on, which needs pipecatcloud 0.2.5 or
-# newer; an agent image pinning an older one runs without it.
+# them, and the fields each handler passes besides ``body``, with values that
+# pass a presence check: pipecat-ai validates some of its runner arguments in
+# ``__post_init__`` (1.12.0's MoQ arguments check their dial target), and the
+# check must fail only where a real session's build would, on a structural
+# fault. SmallWebRTC is imported only when that feature is on, which needs
+# pipecatcloud 0.2.5 or newer; an agent image pinning an older one, or one
+# whose type does not build, runs without it.
 _SESSION_TYPES = (
-    ("DailySessionArguments", True, {"room_url": "", "token": ""}),
+    ("DailySessionArguments", True, {"room_url": "https://probe.invalid/", "token": "probe"}),
     ("PipecatSessionArguments", True, {}),
-    ("WebSocketSessionArguments", True, {"websocket": None}),
-    ("SmallWebRTCSessionArguments", False, {"webrtc_connection": None}),
+    ("WebSocketSessionArguments", True, {"websocket": _PROBE}),
+    ("SmallWebRTCSessionArguments", False, {"webrtc_connection": _PROBE}),
 )
 
 # Tests replace this; see the module docstring for why it is not SystemExit.
@@ -166,18 +177,30 @@ def check_pipecat() -> None:
         _warn(f"The pipecat-ai check did not run ({_describe(e)}).")
 
 
-def check_session_types() -> List[str]:
-    """Refuse to start unless each session type the handlers build builds.
+@dataclasses.dataclass
+class SessionTypes:
+    """What check_session_types() found, for app.py to act on.
 
-    Returns the deprecation warnings for the caller to log, if any. Ends the
-    process on a refusal. A fault in the check itself is reported and startup
-    goes on.
+    ``warnings`` are for app.py to log once logging is set up. ``unbuildable``
+    maps each optional session type that is present but does not build to why;
+    app.py serves without it, as it would if the type were absent.
+    """
+
+    warnings: List[str] = dataclasses.field(default_factory=list)
+    unbuildable: Dict[str, str] = dataclasses.field(default_factory=dict)
+
+
+def check_session_types() -> SessionTypes:
+    """Refuse to start unless each required session type the handlers build builds.
+
+    Ends the process on a refusal. A fault in the check itself is reported and
+    startup goes on.
     """
     try:
         return _check_session_types(importlib.import_module, _installed_version)
     except Exception as e:
         _warn(f"The session arguments check did not run ({_describe(e)}).")
-        return []
+        return SessionTypes()
 
 
 def _check_pipecat(
@@ -205,14 +228,19 @@ def _check_pipecat(
         _refuse(broken.format(_describe(e)))
     except Exception as e:
         _refuse(broken.format(_describe(e)))
-    if not all(isinstance(getattr(runner_types, name, None), type) for name in _RUNNER_TYPES):
-        _refuse(too_old)
+    missing = [n for n in _RUNNER_TYPES if not isinstance(getattr(runner_types, n, None), type)]
+    if missing:
+        them = "them" if len(missing) > 1 else "it"
+        _refuse(
+            f"{pipecat} has no {', '.join(missing)} in pipecat.runner.types, which this image "
+            f"builds session arguments on: pin a pipecat-ai release that provides {them}."
+        )
 
 
 def _check_session_types(
     import_module: Callable[[str], Any],
     installed_version: Callable[[str], Optional[str]],
-) -> List[str]:
+) -> SessionTypes:
     pipecat_version = installed_version("pipecat-ai")
     pipecat = _label("pipecat-ai", pipecat_version)
     pipecatcloud = _label("pipecatcloud", installed_version("pipecatcloud"))
@@ -227,6 +255,7 @@ def _check_session_types(
         )
     runner_arguments = import_module("pipecat.runner.types").RunnerArguments
 
+    report = SessionTypes()
     # Types that take no body although they are not built on pipecat-ai's
     # runner arguments: an old pipecatcloud's own, whatever pipecat-ai is.
     standalone_without_body = []
@@ -240,19 +269,30 @@ def _check_session_types(
                 )
             continue
         try:
-            build(cls, body={}, session_id=None, **fields)
+            build(cls, body={}, session_id="probe", **fields)
         except Exception as e:
-            _refuse(
+            reason = (
                 f"{pipecatcloud} with {pipecat} cannot build the {type_name} this image "
-                f"hands bot() ({_describe(e)}). {supported}"
+                f"hands bot() ({_describe(e)})"
             )
+            if required:
+                _refuse(f"{reason}. {supported}")
+            # An optional type that does not build is treated as absent: the
+            # image serves its other transports rather than refusing them all.
+            report.unbuildable[type_name] = _one_line(reason)
+            report.warnings.append(
+                _one_line(
+                    f"{reason}: the image serves without it, and the transports that need it "
+                    "are off."
+                )
+            )
+            continue
         if not takes_body(cls) and not issubclass(cls, runner_arguments):
             standalone_without_body.append(type_name)
 
-    deprecations = []
     if not takes_body(runner_arguments):
         subject = pipecat if pipecat_version else "The installed pipecat-ai"
-        deprecations.append(
+        report.warnings.append(
             f"{subject} is older than {BODY_VERSION} and deprecated on this image, which "
             f"supports pipecat-ai {MINIMUM_VERSION} or newer: a future release will need "
             f"pipecat-ai {BODY_VERSION} or newer, so upgrade it in the agent image."
@@ -260,12 +300,12 @@ def _check_session_types(
     if standalone_without_body:
         types = " and ".join(standalone_without_body)
         verb = "does" if len(standalone_without_body) == 1 else "do"
-        deprecations.append(
+        report.warnings.append(
             f"{pipecatcloud}'s {types} {verb} not take the request body, which is deprecated on "
             f"this image: a future release will need pipecatcloud {PIPECATCLOUD_BODY_VERSION} "
             "or newer, so upgrade it in the agent image, or leave pipecatcloud to the image."
         )
-    return deprecations
+    return report
 
 
 def _installed_version(distribution: str) -> Optional[str]:

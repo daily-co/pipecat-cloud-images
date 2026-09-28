@@ -5,6 +5,11 @@ on:
     branches: ['main']
   pull_request:
     branches: ['main']
+  # The latest legs follow pipecat-ai releases, which land without a change
+  # here: a weekly run on main finds one this image cannot serve in a quiet
+  # week too, rather than on the next unrelated pull request.
+  schedule:
+    - cron: '17 6 * * 1'
 
 permissions:
   contents: read

@@ -43,9 +43,9 @@ from bot import bot
 
 # Before app.py imports the session types below, so a pipecatcloud that cannot
 # load them with this pipecat-ai is refused with the reason (a bot module that
-# imports them itself has already failed above, with the traceback).
-# Deprecation warnings are logged once logging is set up below.
-_pipecat_deprecations = pcc_pipecat_compat.check_session_types()
+# imports them itself has already failed above, with the traceback). Its
+# warnings are logged once logging is set up below.
+_session_types = pcc_pipecat_compat.check_session_types()
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request, WebSocket
 from fastapi.responses import JSONResponse
@@ -91,8 +91,14 @@ async def _call_readyz_func(func: Callable[[], ReadyzResult]) -> ReadyzResult:
 # Global state dictionary
 GLOBALS = {}
 
-# Initialize feature manager
-feature_manager = FeatureManager()
+# Initialize feature manager. A SmallWebRTC session type that does not build
+# turns SmallWebRTC off, as its absence does, rather than failing each session.
+_smallwebrtc_unbuildable = _session_types.unbuildable.get("SmallWebRTCSessionArguments")
+feature_manager = FeatureManager(
+    unavailable={FeatureKeys.SMALL_WEBRTC_SESSION: _smallwebrtc_unbuildable}
+    if _smallwebrtc_unbuildable
+    else None
+)
 log_features_summary = environ.get("PCC_LOG_FEATURES_SUMMARY", "False").lower() == "true"
 if log_features_summary:
     feature_manager.log_features_summary()
@@ -126,8 +132,8 @@ logger.add(
 pcc_structured_logs.add_file_sink(logger, log_level)
 logger.configure(extra={"session_id": "NONE"})
 
-for _deprecation in _pipecat_deprecations:
-    logger.warning(_deprecation)
+for _warning in _session_types.warnings:
+    logger.warning(_warning)
 
 
 # Filter out noisy Kubernetes probe requests from uvicorn access logs

@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that ran on pipecatcloud's own stand-ins for pipecat's session types, which
   this image no longer accepts.
 
+  SmallWebRTC's session arguments are the exception: if they do not build,
+  the agent starts without SmallWebRTC (and WhatsApp, which needs it), with a
+  warning saying why, and serves its other transports.
+
 - Images for Python 3.11 and newer now ship pipecatcloud 1.2.0, up from 0.4.4.
   The Python 3.10 image keeps 0.4.4, the last pipecatcloud release that runs
   on it; pipecatcloud 1.x and pipecat-ai 1.x both need Python 3.11. If your bot

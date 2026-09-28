@@ -17,8 +17,9 @@ We provide base images for multiple Python versions. See `versions.yaml` for the
 
 **Supported Python versions:** 3.10, 3.11, **3.12 (default/recommended)**, 3.13, 3.14
 
-The Python 3.10 image ships pipecatcloud 0.4.4 and runs pipecat-ai up to 0.0.108:
-pipecatcloud 1.x and pipecat-ai 1.x need Python 3.11 or newer.
+The Python 3.10 image ships pipecatcloud 0.4.4, the last release that runs on 3.10,
+and runs the newest pipecat-ai that still supports 3.10: pipecatcloud 1.x and
+pipecat-ai 1.x both need Python 3.11 or newer.
 
 **Image naming patterns:**
 
@@ -64,7 +65,9 @@ When using this base image, your project must:
 1. Install pipecat-ai 0.0.78 or newer. When the agent starts, the image checks
    that pipecat-ai is installed before importing `bot.py`, and that the session
    arguments it passes to `bot()` build right after; it refuses to start,
-   saying why, if either fails. Releases older than 0.0.91 are deprecated: they
+   saying why, if either fails. SmallWebRTC's are the exception: if they do not
+   build, the agent starts without SmallWebRTC (and WhatsApp, which needs it),
+   with a warning saying why. Releases older than 0.0.91 are deprecated: they
    work, with a warning at startup, and a future release of the image will
    require 0.0.91.
 

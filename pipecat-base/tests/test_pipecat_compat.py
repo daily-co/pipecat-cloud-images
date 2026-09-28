@@ -38,18 +38,31 @@ def _modules(
     related: bool = True,
     smallwebrtc: bool = True,
     post_init_error: Optional[Exception] = None,
+    smallwebrtc_error: Optional[Exception] = None,
+    validates: bool = False,
 ):
     """with_body: runner arguments declare ``body`` (pipecat-ai 0.0.91+).
     related: session types are built on the runner types (pipecatcloud 0.2.1+);
         otherwise they are pipecatcloud 0.2.0's own.
     smallwebrtc: pipecatcloud has SmallWebRTCSessionArguments (0.2.5+).
     post_init_error: raised when a Daily session type is built.
+    smallwebrtc_error: raised when a SmallWebRTC session type is built.
+    validates: runner arguments reject a missing session id or connection in
+        ``__post_init__``, as pipecat-ai does for some already.
     """
+
+    def require(args, *names):
+        for name in names if validates else ():
+            if not getattr(args, name, None):
+                raise ValueError(f"{name} is required")
 
     @dataclasses.dataclass
     class RunnerArguments:
         if with_body:
             body: Any = dataclasses.field(default_factory=dict, kw_only=True)
+
+        def __post_init__(self):
+            require(self, "session_id")
 
     @dataclasses.dataclass
     class DailyRunnerArguments(RunnerArguments):
@@ -59,14 +72,23 @@ def _modules(
         def __post_init__(self):
             if post_init_error is not None:
                 raise post_init_error
+            require(self, "session_id", "room_url", "token")
 
     @dataclasses.dataclass
     class WebSocketRunnerArguments(RunnerArguments):
         websocket: Any
 
+        def __post_init__(self):
+            require(self, "session_id", "websocket")
+
     @dataclasses.dataclass
     class SmallWebRTCRunnerArguments(RunnerArguments):
         webrtc_connection: Any
+
+        def __post_init__(self):
+            if smallwebrtc_error is not None:
+                raise smallwebrtc_error
+            require(self, "session_id", "webrtc_connection")
 
     runner = type(
         "runner_types",
@@ -227,12 +249,35 @@ class TestCheckPipecat:
         line = _refusal(termination_log, capfd)
         assert "pipecat-ai 0.0.76 is too old" in line and "0.0.78 or newer" in line
 
-    def test_a_missing_runner_type_is_too_old(self, termination_log, capfd):
+    def test_a_runner_type_missing_from_the_module_is_named_not_called_too_old(
+        self, termination_log, capfd
+    ):
+        # The four types arrived with their module, so a module without one is
+        # a later release or a fork, never an older one.
         runner, _ = _modules()
         partial = type("runner_types", (), {"RunnerArguments": runner.RunnerArguments})
         with pytest.raises(SystemExit):
-            _check_pipecat(_importer(partial), pipecat="0.0.70")
-        assert "pipecat-ai 0.0.70 is too old" in _refusal(termination_log, capfd)
+            _check_pipecat(_importer(partial), pipecat="2.0.0")
+        line = _refusal(termination_log, capfd)
+        assert (
+            "pipecat-ai 2.0.0 has no DailyRunnerArguments, WebSocketRunnerArguments, "
+            "SmallWebRTCRunnerArguments in pipecat.runner.types" in line
+        )
+        assert "pin a pipecat-ai release that provides them" in line
+        assert "too old" not in line
+
+    def test_one_missing_runner_type_reads_as_one(self, termination_log, capfd):
+        runner, _ = _modules()
+        partial = type(
+            "runner_types",
+            (),
+            {n: getattr(runner, n) for n in pcc_pipecat_compat._RUNNER_TYPES[:-1]},
+        )
+        with pytest.raises(SystemExit):
+            _check_pipecat(_importer(partial), pipecat="2.0.0")
+        line = _refusal(termination_log, capfd)
+        assert "pipecat-ai 2.0.0 has no SmallWebRTCRunnerArguments in pipecat.runner.types" in line
+        assert line.endswith("pin a pipecat-ai release that provides it.")
 
     def test_a_broken_dependency_is_reported_as_such(self, termination_log, capfd):
         error = ModuleNotFoundError("No module named 'numpy'", name="numpy")
@@ -306,13 +351,13 @@ class TestCheckPipecat:
 class TestCheckSessionTypes:
     def test_current_types_pass_silently(self, termination_log, capfd):
         runner, agent = _modules(with_body=True)
-        assert _check_session_types(_importer(runner, agent)) == []
+        assert _check_session_types(_importer(runner, agent)) == pcc_pipecat_compat.SessionTypes()
         assert not termination_log.exists()
         assert capfd.readouterr().err == ""
 
     def test_types_without_body_pass_with_a_deprecation_warning(self, termination_log, capfd):
         runner, agent = _modules(with_body=False)
-        [warning] = _check_session_types(_importer(runner, agent), pipecat="0.0.88")
+        [warning] = _check_session_types(_importer(runner, agent), pipecat="0.0.88").warnings
         assert "pipecat-ai 0.0.88 is older than 0.0.91" in warning
         assert "supports pipecat-ai 0.0.78 or newer" in warning
         # Returned for app.py to log once logging is set up, not written here.
@@ -321,14 +366,40 @@ class TestCheckSessionTypes:
 
     def test_the_warning_reads_well_without_a_version(self):
         runner, agent = _modules(with_body=False)
-        [warning] = _check_session_types(_importer(runner, agent), pipecat=None)
+        [warning] = _check_session_types(_importer(runner, agent), pipecat=None).warnings
         assert warning.startswith("The installed pipecat-ai is older than 0.0.91")
 
     def test_an_old_pipecatcloud_without_smallwebrtc_passes(self, termination_log):
         # pipecatcloud before 0.2.5; app.py runs such an image without SmallWebRTC.
         runner, agent = _modules(smallwebrtc=False)
-        assert _check_session_types(_importer(runner, agent), pipecatcloud="0.2.4") == []
+        report = _check_session_types(_importer(runner, agent), pipecatcloud="0.2.4")
+        assert report == pcc_pipecat_compat.SessionTypes()
         assert not termination_log.exists()
+
+    def test_types_that_check_their_fields_build_with_the_probe(self, termination_log):
+        # pipecat-ai validates some runner arguments in __post_init__. The
+        # check builds with values a presence check accepts, so it fails only
+        # where a real session's build would.
+        runner, agent = _modules(validates=True)
+        assert _check_session_types(_importer(runner, agent)) == pcc_pipecat_compat.SessionTypes()
+        assert not termination_log.exists()
+
+    def test_a_smallwebrtc_type_that_does_not_build_is_served_without(self, termination_log, capfd):
+        # Optional, like an absent one: the image turns SmallWebRTC off and
+        # serves its other transports, rather than refusing them all.
+        error = AttributeError("'super' object has no attribute '__post_init__'")
+        runner, agent = _modules(smallwebrtc_error=error)
+        report = _check_session_types(_importer(runner, agent))
+        assert list(report.unbuildable) == ["SmallWebRTCSessionArguments"]
+        reason = report.unbuildable["SmallWebRTCSessionArguments"]
+        assert reason.startswith(
+            "pipecatcloud 1.2.0 with pipecat-ai 0.0.95 cannot build the SmallWebRTCSessionArguments"
+        )
+        assert "AttributeError: 'super' object has no attribute '__post_init__'" in reason
+        [warning] = report.warnings
+        assert warning.startswith(reason) and "the transports that need it are off" in warning
+        assert not termination_log.exists()
+        assert capfd.readouterr().err == ""
 
     def test_an_old_pipecatcloud_with_its_own_types_is_warned_about_not_pipecat(
         self, termination_log
@@ -336,7 +407,7 @@ class TestCheckSessionTypes:
         # pipecatcloud before 0.2.1 defined its types without pipecat-ai's, and
         # its WebSocketSessionArguments takes no body whatever pipecat-ai is.
         runner, agent = _modules(related=False, smallwebrtc=False)
-        [warning] = _check_session_types(_importer(runner, agent), pipecatcloud="0.2.0")
+        [warning] = _check_session_types(_importer(runner, agent), pipecatcloud="0.2.0").warnings
         assert warning.startswith("pipecatcloud 0.2.0's WebSocketSessionArguments does not take")
         assert "pipecatcloud 0.2.1 or newer" in warning
         assert "pipecat-ai" not in warning
@@ -346,7 +417,7 @@ class TestCheckSessionTypes:
         runner, agent = _modules(with_body=False, related=False, smallwebrtc=False)
         pipecat, pipecatcloud = _check_session_types(
             _importer(runner, agent), pipecat="0.0.88", pipecatcloud="0.2.0"
-        )
+        ).warnings
         assert pipecat.startswith("pipecat-ai 0.0.88 is older than 0.0.91")
         assert pipecatcloud.startswith("pipecatcloud 0.2.0's WebSocketSessionArguments")
 
@@ -392,7 +463,7 @@ class TestCheckSessionTypes:
             raise KeyError("a bug")
 
         monkeypatch.setattr(pcc_pipecat_compat, "_check_session_types", broken)
-        assert pcc_pipecat_compat.check_session_types() == []
+        assert pcc_pipecat_compat.check_session_types() == pcc_pipecat_compat.SessionTypes()
         assert "WARNING: The session arguments check did not run" in capfd.readouterr().err
 
 
@@ -403,12 +474,13 @@ class TestInstalledPipecat:
         from pipecat.runner.types import RunnerArguments
 
         pcc_pipecat_compat.check_pipecat()
-        warnings = pcc_pipecat_compat.check_session_types()
+        report = pcc_pipecat_compat.check_session_types()
         assert not termination_log.exists()
+        assert report.unbuildable == {}
         if pcc_pipecat_compat.takes_body(RunnerArguments):
-            assert warnings == []
+            assert report.warnings == []
         else:
-            assert len(warnings) == 1 and "older than 0.0.91" in warnings[0]
+            assert len(report.warnings) == 1 and "older than 0.0.91" in report.warnings[0]
 
 
 # ------------------------------------------------------------
@@ -616,6 +688,70 @@ class TestProcess:
         assert {"stream": "stdout", "line": "BOT IMPORT LINE"} in [
             {"stream": r["stream"], "line": r["line"]} for r in _lane(log_dir)
         ]
+
+    def test_a_smallwebrtc_type_that_does_not_build_turns_smallwebrtc_off(self, tmp_path):
+        # The image starts and serves its other transports, saying why
+        # SmallWebRTC, and WhatsApp with it, are off.
+        agent = _stub_pipecatcloud(
+            tmp_path / "pipecatcloud",
+            "9.0.0",
+            """
+            from dataclasses import dataclass
+            from typing import Any, Optional
+
+            @dataclass
+            class SessionArguments:
+                session_id: Optional[str]
+
+            @dataclass
+            class PipecatSessionArguments(SessionArguments):
+                body: Any = None
+
+            @dataclass
+            class DailySessionArguments(SessionArguments):
+                room_url: str = ""
+                token: str = ""
+                body: Any = None
+
+            @dataclass
+            class WebSocketSessionArguments(SessionArguments):
+                websocket: Any = None
+                body: Any = None
+
+            @dataclass
+            class SmallWebRTCSessionArguments(SessionArguments):
+                webrtc_connection: Any = None
+                body: Any = None
+
+                def __post_init__(self):
+                    # No base defines it, as with pipecat-ai 0.0.77 under
+                    # pipecatcloud 0.4.4: a structural fault, which no real
+                    # session's build could get past either.
+                    super().__post_init__()
+            """,
+        )
+        (agent / "pipecatcloud" / "__init__.py").write_text(
+            "class SmallWebRTCSessionManager: ...\n"
+        )
+        proc = _import_app(
+            [agent, _bot_module(tmp_path / "bot")],
+            {pcc_pipecat_compat.TERMINATION_LOG_ENV: str(tmp_path / "termination-log")},
+            then=(
+                "; from feature_manager import FeatureKeys as K"
+                "; print('ENABLED', [k.value for k in K if app.feature_manager.is_enabled(k)])"
+            ),
+        )
+        assert proc.returncode == 0, proc.stderr[-2000:]
+        assert (
+            "pipecatcloud 9.0.0 with pipecat-ai" in proc.stderr
+            and "cannot build the SmallWebRTCSessionArguments" in proc.stderr
+            and "AttributeError" in proc.stderr
+        )
+        [enabled] = [line for line in proc.stdout.splitlines() if line.startswith("ENABLED")]
+        assert "daily_transport" in enabled and "websocket_transport" in enabled
+        for off in ("small_webrtc_session", "smallwebrtc_transport", "whatsapp"):
+            assert f"'{off}'" not in enabled
+        assert not (tmp_path / "termination-log").exists()
 
     def test_no_pipecat_at_all_is_refused(self, tmp_path):
         # This run's installed packages without pipecat-ai, and no site-packages,
