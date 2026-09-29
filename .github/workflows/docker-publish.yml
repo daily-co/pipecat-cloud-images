@@ -1,10 +1,20 @@
 name: Docker Build and Push
 
+# Only what goes into the image: every push to main re-pushes the version tags,
+# so a change elsewhere in the repo would move them without a release.
 on:
   push:
     branches: ['main']
+    paths: &image-paths
+      - 'pipecat-base/**'
+      - '!pipecat-base/tests/**'
+      - '!pipecat-base/README.md'
+      - '!pipecat-base/CHANGELOG.md'
+      - 'versions.yaml'
+      - '.github/workflows/docker-publish.yml'
   pull_request:
     branches: ['main']
+    paths: *image-paths
 
 jobs:
   find-images:
