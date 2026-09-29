@@ -1,8 +1,15 @@
+# ruff runs from pipecat-base's lock, the version CI runs, so the lock is the
+# only place that version lives. Needs uv.
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.7
+  - repo: local
     hooks:
-      - id: ruff
-        language_version: python3
-        args: [--fix]
+      - id: ruff-check
+        name: ruff check
+        language: system
+        types_or: [python, pyi]
+        entry: uv run --project pipecat-base --locked --only-group lint ruff check --fix
       - id: ruff-format
+        name: ruff format
+        language: system
+        types_or: [python, pyi]
+        entry: uv run --project pipecat-base --locked --only-group lint ruff format

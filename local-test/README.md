@@ -11,7 +11,7 @@ This tool allows developers to test their Pipecat containers locally by simulati
 Before getting started, ensure you have:
 
 * **Docker** installed and running
-* **Python 3.12** or higher
+* **[uv](https://docs.astral.sh/uv/)**, which installs the server's Python and dependencies on first run
 
 ---
 
@@ -23,11 +23,11 @@ Build and run your local container:
 
 ```bash
 # Build the container
-# Replace 'smallwebrtc' with your application name
-docker build -t pipecat-smallwebrtc:latest .
+# Replace 'my-agent' with your application name
+docker build -t my-agent:latest .
 
 # Run the container
-docker run -it -p 8080:8080 pipecat-smallwebrtc
+docker run -it -p 8080:8080 my-agent
 ```
 
 ---
@@ -52,10 +52,10 @@ cp env.example .env
 Run the server with:
 
 ```bash
-python mock_pipecat_cloud.py
+uv run mock_pipecat_cloud.py
 ```
 
-The server will now simulate the Pipecat cloud environment locally.
+The server listens on port `7860` and simulates the Pipecat Cloud environment locally.
 
 ---
 

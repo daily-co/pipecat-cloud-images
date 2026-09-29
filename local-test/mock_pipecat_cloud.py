@@ -1,3 +1,15 @@
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "aiohttp>=3.11,<4",
+#     "fastapi>=0.115.6,<1",
+#     "loguru~=0.7.3",
+#     "pydantic>=2,<3",
+#     "python-dotenv>=1.0.1,<2",
+#     "uvicorn>=0.32,<1",
+# ]
+# ///
+
 import asyncio
 import os
 import uuid
