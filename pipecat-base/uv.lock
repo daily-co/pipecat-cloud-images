@@ -905,6 +905,12 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+lint = [
+    { name = "ruff" },
+]
+test = [
+    { name = "pytest" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -920,6 +926,8 @@ dev = [
     { name = "pytest", specifier = "~=8.4" },
     { name = "ruff", specifier = "==0.12.12" },
 ]
+lint = [{ name = "ruff", specifier = "==0.12.12" }]
+test = [{ name = "pytest", specifier = "~=8.4" }]
 
 [[package]]
 name = "pipecatcloud"

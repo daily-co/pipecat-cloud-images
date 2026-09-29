@@ -25,12 +25,13 @@ jobs:
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
 
       # Run from the repo root so ruff covers local-test too, with the
-      # settings in ruff.toml; pipecat-base's dev group pins ruff.
+      # settings in ruff.toml; pipecat-base's lint group pins ruff, and is all
+      # this installs.
       - name: Ruff format check
-        run: uv run --project pipecat-base --locked ruff format --diff --check
+        run: uv run --project pipecat-base --locked --only-group lint ruff format --diff --check
 
       - name: Ruff lint
-        run: uv run --project pipecat-base --locked ruff check
+        run: uv run --project pipecat-base --locked --only-group lint ruff check
 
   python-versions:
     runs-on: ubuntu-latest
@@ -47,9 +48,9 @@ jobs:
           echo "default-python=$(yq '.base.default_python' versions.yaml)" >> "$GITHUB_OUTPUT"
 
   test:
-    # The suite runs against the lock the images ship, plus its dev group
-    # (pytest), with the customer's pipecat-ai layered over it: the oldest the
-    # image supports, and the newest that Python can install.
+    # The suite runs against the lock the images ship, plus pytest, with the
+    # customer's pipecat-ai layered over it: the oldest the image supports, and
+    # the newest that Python can install.
     name: test (Python ${{ matrix.python-version }}, pipecat-ai ${{ matrix.pipecat }})
     needs: python-versions
     runs-on: ubuntu-latest
@@ -90,4 +91,4 @@ jobs:
         working-directory: pipecat-base
         env:
           PIPECAT_SPEC: ${{ matrix.pipecat-spec }}
-        run: uv run --locked --with "$PIPECAT_SPEC" pytest -q
+        run: uv run --locked --no-dev --group test --with "$PIPECAT_SPEC" pytest -q
