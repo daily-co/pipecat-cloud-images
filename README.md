@@ -20,7 +20,7 @@ uv run --project pipecat-base ruff check --fix
 cd pipecat-base && uv run pytest
 ```
 
-`pre-commit install` runs the same ruff version on each commit.
+`uvx pre-commit install` runs the same ruff on each commit.
 
 ## Base Image
 

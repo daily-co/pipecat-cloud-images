@@ -15,9 +15,9 @@ dependencies = [
 ]
 
 [dependency-groups]
-# Not in the image: the Dockerfile syncs with --no-dev. CI takes each group on
-# its own; dev gives a local `uv run` both. ruff matches the rev in
-# .pre-commit-config.yaml; its settings are in the repo root's ruff.toml.
+# Not in the image: the Dockerfile syncs with --no-dev. CI and the pre-commit
+# hooks take each group on its own; dev gives a local `uv run` both. ruff's
+# settings are in the repo root's ruff.toml.
 test = ["pytest~=8.4"]
 lint = ["ruff==0.12.12"]
 dev = [{ include-group = "test" }, { include-group = "lint" }]
