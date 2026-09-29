@@ -5,7 +5,7 @@ All notable changes to the **Pipecat Cloud Base Images** will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - 2026-09-28
+## [0.2.0] - 2026-09-29
 
 ### Changed
 
@@ -64,6 +64,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each captured line was logged back into the capture. It flooded stderr and
   could stall the agent's startup for good. The image now imports
   `pipecatcloud` before the capture begins.
+
+## [0.1.32] - 2026-09-28
+
+### Added
+
+- The image now carries a third-party license notice at
+  `/usr/share/doc/pipecat-base/THIRD_PARTY_NOTICES.md`, saying where to find
+  the license terms and source for the Debian packages, Python, uv, the NLTK
+  data, and the Python packages in `/app/.venv`. uv's license texts are
+  included beside it.
 
 ## [0.1.31] - 2026-09-22
 

@@ -112,7 +112,7 @@ To release a new version of the base image:
 
    Below 1.0.0, a breaking change bumps the minor version instead, as
    [Semantic Versioning](https://semver.org/#how-should-i-deal-with-revisions-in-the-0yz-initial-development-phase)
-   allows for 0.y.z releases (0.1.31 → 0.2.0).
+   allows for 0.y.z releases (0.1.32 → 0.2.0).
 
 2. **Update the lock file**:
 
@@ -132,6 +132,14 @@ To release a new version of the base image:
    ```
 
    Then open a PR from `release/vX.Y.Z` to `main`. After approval and merge, GitHub Actions will automatically build and publish the new version.
+
+## Third-Party Software
+
+The image is built on Debian 13 with Python and uv, and includes the Python
+packages in `/app/.venv`. Their licenses ship in the image, and
+[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md), also at
+`/usr/share/doc/pipecat-base/THIRD_PARTY_NOTICES.md` in the image, says where
+to find each license and the Debian source.
 
 ## More Information
 
