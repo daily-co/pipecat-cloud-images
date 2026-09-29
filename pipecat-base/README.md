@@ -107,8 +107,9 @@ Every other merge that touches the image builds it and runs its checks, but
 pushes nothing. So a change can land over several pull requests and ship in one
 release:
 
-- **A change to the image** adds its entry under `[Unreleased]` in
-  `CHANGELOG.md` and leaves the version alone.
+- **A change to the image**, anything under `pipecat-base/` or
+  `versions.yaml`, adds its entry under `[Unreleased]` in `CHANGELOG.md` and
+  leaves the version alone.
 - **A release** is a pull request that bumps the version, as below.
 
 Keep `main` releasable: anything merged ships with the next release, so a
@@ -158,8 +159,10 @@ To release a new version of the base image:
    Then open a PR from `release/vX.Y.Z` to `main`. After approval and merge,
    GitHub Actions builds and pushes the images for every Python version, then
    tags the merge commit `vX.Y.Z`. If an image fails to push, there is no tag:
-   re-run the failed jobs to finish the release. A version is published once,
-   so a fix after a release needs a new version.
+   re-run the failed jobs to finish the release, before merging anything else
+   that touches the image. Until the tag exists, the version reads as
+   unreleased, and the next such merge would publish it from its own commit.
+   A version is published once, so a fix after a release needs a new version.
 
 ## Third-Party Software
 
