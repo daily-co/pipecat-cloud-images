@@ -98,6 +98,26 @@ When using this base image, your project must:
 
 ## Releasing New Versions
 
+**The `version` in `pipecat-base/pyproject.toml` is what releases the image.**
+When a merge to `main` changes it to a version that has not been released yet,
+GitHub Actions publishes that version. Changing `version = "0.2.0"` to
+`version = "0.2.1"`, with the steps below, releases 0.2.1.
+
+Every other merge that touches the image builds it and runs its checks, but
+pushes nothing. So a change can land over several pull requests and ship in one
+release:
+
+- **A change to the image** adds its entry under `[Unreleased]` in
+  `CHANGELOG.md` and leaves the version alone.
+- **A release** is a pull request that bumps the version, as below.
+
+Keep `main` releasable: anything merged ships with the next release, so a
+change that is not ready to ship waits on its own branch.
+
+The workflow tags each release `vX.Y.Z` itself, and that tag is how it knows a
+version is already out. Do not create or push `v` tags by hand: a tag for a
+version that has not been published yet makes the workflow skip publishing it.
+
 To release a new version of the base image:
 
 1. **Bump the version** (from the `pipecat-base` directory):
@@ -119,7 +139,12 @@ To release a new version of the base image:
    uv lock
    ```
 
-3. **Update the changelog**: Move `[Unreleased]` section to `[X.Y.Z] - YYYY-MM-DD` in `CHANGELOG.md`
+   The lock records the image's own version, and the image builds with
+   `uv sync --locked`, so the two must agree or the build fails and nothing is
+   published. `uv version` updates both, which makes this a no-op after step 1;
+   it matters if the version was edited in `pyproject.toml` by hand.
+
+3. **Update the changelog**: Rename the `[Unreleased]` section to `[X.Y.Z] - YYYY-MM-DD` in `CHANGELOG.md`, and start a new, empty `[Unreleased]` section above it
 
 4. **Create release PR**:
 
@@ -130,7 +155,11 @@ To release a new version of the base image:
    git push origin release/vX.Y.Z
    ```
 
-   Then open a PR from `release/vX.Y.Z` to `main`. After approval and merge, GitHub Actions will automatically build and publish the new version.
+   Then open a PR from `release/vX.Y.Z` to `main`. After approval and merge,
+   GitHub Actions builds and pushes the images for every Python version, then
+   tags the merge commit `vX.Y.Z`. If an image fails to push, there is no tag:
+   re-run the failed jobs to finish the release. A version is published once,
+   so a fix after a release needs a new version.
 
 ## Third-Party Software
 
