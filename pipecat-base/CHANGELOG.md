@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Session observability is published to the Pipecat Cloud event pipeline when
+  `PIPECAT_EVENT_PUBLISHER_ENDPOINT` is set, and dropped when it is not. A
+  session reports its startup and transport timing, the latency of each turn
+  and the parts that latency was spent on, what each service spent and
+  consumed (including LLM token counts), who was speaking and when, the
+  function calls the bot made, and the errors it hit. One event carries one
+  record, named for the record it carries.
+
+- Each observer is imported on its own and skipped when the import fails, so a
+  bot reports whatever its Pipecat version provides rather than failing to
+  start. Service metrics, speaking, function calls and errors need Pipecat
+  1.11.0; startup timing and latency are reported as before.
+
+  Function call arguments and results are not published: what a bot's tools
+  were asked and answered belongs to the bot, not to the platform running it.
+
+### Removed
+
+- The `[pcc-observability]` log lines reporting startup timing and turn
+  latency. What they reported is published as events instead, and a session's
+  timeline in the dashboard is built from Pipecat's own log output rather than
+  from these.
+
 ## [0.2.3] - 2026-10-01
 
 ### Changed
