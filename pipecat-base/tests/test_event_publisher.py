@@ -8,6 +8,7 @@ envelope against those rules rather than against our own idea of it.
 """
 
 import asyncio
+import importlib.util
 import json
 import os
 import pathlib
@@ -272,6 +273,21 @@ class _Worker:
         self.observers.append(observer)
 
 
+def _pipecat_has(*modules):
+    """Whether the installed pipecat-ai has these modules. CI also runs the
+    oldest release the image supports, which predates several of them."""
+    try:
+        return all(importlib.util.find_spec(m) is not None for m in modules)
+    except ImportError:
+        return False
+
+
+_AGGREGATORS = "pipecat.processors.aggregators.llm_response_universal"
+_needs_aggregators = pytest.mark.skipif(
+    not _pipecat_has(_AGGREGATORS), reason=f"this pipecat-ai has no {_AGGREGATORS}"
+)
+
+
 def _hide(monkeypatch, *names):
     """Make importing these observer modules raise, as an older Pipecat would."""
     import sys
@@ -280,6 +296,13 @@ def _hide(monkeypatch, *names):
         monkeypatch.setitem(sys.modules, f"pipecat.observers.{name}", None)
 
 
+@pytest.mark.skipif(
+    not _pipecat_has(
+        "pipecat.observers.startup_timing_observer",
+        "pipecat.observers.user_bot_latency_observer",
+    ),
+    reason="this pipecat-ai has neither observer the test expects to remain",
+)
 def test_a_pipecat_without_the_newer_observers_reports_what_it_has(monkeypatch):
     """A bot pins its own Pipecat, so the image cannot assume what is there."""
     worker = _Worker()
@@ -388,6 +411,7 @@ def test_the_walk_reaches_processors_nested_in_pipelines():
     assert deep in found and shallow in found
 
 
+@_needs_aggregators
 def test_transcripts_are_published_for_both_sides(monkeypatch, posted):
     from pipecat.processors.aggregators.llm_response_universal import (
         LLMAssistantAggregator,
@@ -421,6 +445,7 @@ def test_transcripts_are_published_for_both_sides(monkeypatch, posted):
     assert posted[1][1]["event_properties"]["interrupted"] is True
 
 
+@_needs_aggregators
 def test_a_turn_with_no_words_is_not_a_transcript(monkeypatch, posted):
     """An assistant turn can be a tool call and nothing else."""
     from pipecat.processors.aggregators.llm_response_universal import LLMAssistantAggregator
@@ -454,6 +479,7 @@ def _transcript_setup(monkeypatch, exclude):
     return user
 
 
+@_needs_aggregators
 def test_a_deployment_excluding_content_publishes_no_transcript(monkeypatch, posted):
     """Everything else still travels; only what was said stays behind."""
     user = _transcript_setup(monkeypatch, exclude=True)
@@ -462,6 +488,7 @@ def test_a_deployment_excluding_content_publishes_no_transcript(monkeypatch, pos
     assert posted == []
 
 
+@_needs_aggregators
 def test_transcripts_travel_when_content_is_not_excluded(monkeypatch):
     user = _transcript_setup(monkeypatch, exclude=False)
 
