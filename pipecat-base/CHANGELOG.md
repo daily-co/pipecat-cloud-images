@@ -14,8 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arguments before importing your `bot.py`, and that the session arguments it
   passes to `bot()` build right after. It refuses to start if either fails,
   for example with no pipecat-ai, with a release older than 0.0.77, or with
-  0.0.77 under pipecatcloud 0.4.4, which the Python 3.10 image ships. It stops
-  with one line saying why, for example:
+  0.0.77 under an agent image pinning pipecatcloud 0.4.4. It stops with one
+  line saying why, for example:
 
   ```
   Refusing to start: pipecat-ai 0.0.76 is too old for this image, which needs pipecat-ai 0.0.78 or newer: upgrade pipecat-ai in the agent image and deploy again.
@@ -32,13 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the agent starts without SmallWebRTC (and WhatsApp, which needs it), with a
   warning saying why, and serves its other transports.
 
-- Images for Python 3.11 and newer now ship pipecatcloud 1.2.0, up from 0.4.4.
-  The Python 3.10 image keeps 0.4.4, the last pipecatcloud release that runs
-  on it; pipecatcloud 1.x and pipecat-ai 1.x both need Python 3.11. If your bot
-  imports `SmallWebRTCRunnerArguments` from the top-level `pipecatcloud`
-  package, import `SmallWebRTCSessionArguments` from `pipecatcloud.agent`
-  instead. An agent image that pins its own pipecatcloud version is
-  unaffected by this move.
+- The image now ships pipecatcloud 1.2.0, up from 0.4.4. If your bot imports
+  `SmallWebRTCRunnerArguments` from the top-level `pipecatcloud` package,
+  import `SmallWebRTCSessionArguments` from `pipecatcloud.agent` instead. An
+  agent image that pins its own pipecatcloud version is unaffected by this
+  move.
 
 ### Deprecated
 
@@ -49,6 +47,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `WebSocketSessionArguments` does not take the request body. It works on
   this image, which logs a warning at startup; a future release will require
   0.2.1 or newer.
+
+### Removed
+
+- **Breaking:** the Python 3.10 images, deprecated since 0.1.18. pipecatcloud
+  1.x and pipecat-ai 1.x both need Python 3.11, and Python 3.10 reaches end of
+  life in October 2026. 0.1.32 is the last release with a Python 3.10 image:
+  its `-py3.10` tags remain published but no longer update, so move the agent
+  image to Python 3.11 or newer to take this release.
 
 ### Fixed
 

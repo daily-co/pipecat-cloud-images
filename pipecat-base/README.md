@@ -15,11 +15,10 @@ This image provides the foundational runtime environment for running agents on P
 
 We provide base images for multiple Python versions. See `versions.yaml` for the current list of supported versions.
 
-**Supported Python versions:** 3.10, 3.11, **3.12 (default/recommended)**, 3.13, 3.14
+**Supported Python versions:** 3.11, **3.12 (default/recommended)**, 3.13, 3.14
 
-The Python 3.10 image ships pipecatcloud 0.4.4, the last release that runs on 3.10,
-and runs the newest pipecat-ai that still supports 3.10: pipecatcloud 1.x and
-pipecat-ai 1.x both need Python 3.11 or newer.
+0.1.32 was the last release with a Python 3.10 image. Its `-py3.10` tags remain
+published but no longer update.
 
 **Image naming patterns:**
 

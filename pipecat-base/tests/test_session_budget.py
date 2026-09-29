@@ -166,10 +166,6 @@ class TestTeardownIsNotSwallowed:
         with pytest.raises(asyncio.CancelledError):
             await run
 
-    @pytest.mark.skipif(
-        sys.version_info < (3, 11),
-        reason="Task.cancelling() is 3.11+; the 3.10 behaviour is pinned below",
-    )
     @sync
     async def test_teardown_during_the_unwind_still_propagates(self, monkeypatch):
         """The case the budget makes easy to miss.
@@ -180,40 +176,23 @@ class TestTeardownIsNotSwallowed:
         discriminator this returns normally and the caller never learns the
         process is going away.
         """
-        run = await _teardown_during_the_unwind(monkeypatch)
+
+        async def slow_unwind_bot(args):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                pass  # absorb, like Pipecat's runner
+            await asyncio.sleep(0.5)  # ...then take a while to tear down
+
+        monkeypatch.setattr(app, "bot", slow_unwind_bot)
+        app.GLOBALS[app._BUDGET_KEY] = 0.05
+
+        run = asyncio.create_task(app._run_bot_with_budget(_args()))
+        await asyncio.sleep(0.15)  # budget has fired; bot is mid-unwind
+        run.cancel()
+
         with pytest.raises(asyncio.CancelledError):
             await run
-
-    @pytest.mark.skipif(
-        sys.version_info >= (3, 11),
-        reason="the 3.10 fallback; 3.11+ is pinned above",
-    )
-    @sync
-    async def test_on_3_10_a_teardown_during_the_unwind_is_taken_as_ours(self, monkeypatch):
-        """Without ``Task.cancelling()`` the two cancellations cannot be told
-        apart, and app.py documents treating this one as its own
-        (``_cancellation_requested_on_self``): the run returns normally."""
-        run = await _teardown_during_the_unwind(monkeypatch)
-        await run
-
-
-async def _teardown_during_the_unwind(monkeypatch) -> asyncio.Task:
-    """Cancel the run from outside while the bot unwinds from the budget's cancel."""
-
-    async def slow_unwind_bot(args):
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            pass  # absorb, like Pipecat's runner
-        await asyncio.sleep(0.5)  # ...then take a while to tear down
-
-    monkeypatch.setattr(app, "bot", slow_unwind_bot)
-    app.GLOBALS[app._BUDGET_KEY] = 0.05
-
-    run = asyncio.create_task(app._run_bot_with_budget(_args()))
-    await asyncio.sleep(0.15)  # budget has fired; bot is mid-unwind
-    run.cancel()
-    return run
 
 
 class TestCancellationPrimitive:

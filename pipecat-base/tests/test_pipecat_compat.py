@@ -606,8 +606,9 @@ class TestProcess:
         ].items()
 
     def test_a_pipecat_that_raises_on_import_is_refused_with_the_lane_on(self, tmp_path):
-        # pipecatcloud 0.4.4 (the Python 3.10 image's) imports pipecat-ai when
-        # preloaded and catches only ImportError; the check still has the say.
+        # pipecatcloud 0.4.4, which an agent image may pin, imports pipecat-ai
+        # when preloaded and catches only ImportError; the check still has the
+        # say.
         termination = tmp_path / "termination-log"
         stub = _stub_pipecat(tmp_path / "stub", "0.0.95", "raise RuntimeError('broken build')\n")
         proc = _import_app(
@@ -804,8 +805,8 @@ class TestProcess:
         assert proc.returncode == 0, proc.stderr[-2000:]
 
     def test_with_the_lane_on_pipecat_logs_its_import_into_the_lane(self, tmp_path):
-        # Whoever imports pipecat-ai first (the check, or pipecatcloud 0.4.4
-        # when preloaded), what it logs at import, as its banner, goes through
+        # Whoever imports pipecat-ai first (the check, or a pinned pipecatcloud
+        # 0.4.4 when preloaded), what it logs at import, as its banner, goes through
         # loguru's handlers of the moment: the lane's, which it must reach.
         stub = _stub_pipecat(
             tmp_path / "stub",

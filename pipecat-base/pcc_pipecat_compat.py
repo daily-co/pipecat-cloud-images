@@ -21,9 +21,9 @@ failing every session behind healthy probes:
   without it, as it does when the type is absent, and logs why.
 
 Both decide by what works, never by version number: pipecat-ai 0.0.77 builds
-on pipecatcloud 1.x but not on 0.4.4 (the Python 3.10 image's), and a fork or
-a build from source has whatever version it has. Versions appear in messages
-only.
+on pipecatcloud 1.x but not on 0.4.4, which an agent image may pin, and a fork
+or a build from source has whatever version it has. Versions appear in
+messages only.
 
 ``build()`` is how every handler builds session arguments. pipecat-ai added
 ``body`` to its base runner arguments in 0.0.91; before that, passing it to
@@ -65,7 +65,8 @@ from typing import Any, Callable, Dict, List, NoReturn, Optional
 import pcc_structured_logs
 
 # The oldest pipecat-ai this image supports: the first release every session
-# type builds on, with either pipecatcloud the image ships.
+# type builds on, with the pipecatcloud the image ships and with 0.4.4, which it
+# shipped through 0.1.32 and an agent image may pin.
 MINIMUM_VERSION = "0.0.78"
 
 # The first release whose runner arguments take ``body``. Older ones work

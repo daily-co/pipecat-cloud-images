@@ -48,9 +48,9 @@ jobs:
           echo "default-python=$(yq '.base.default_python' versions.yaml)" >> "$GITHUB_OUTPUT"
 
   test:
-    # The suite runs against the lock each image ships (its pipecatcloud differs
-    # by Python), with the customer's pipecat-ai layered over it: the oldest the
-    # image supports, and the newest that Python can install.
+    # The suite runs against the lock the images ship, with the customer's
+    # pipecat-ai layered over it: the oldest the image supports, and the newest
+    # that Python can install.
     name: test (Python ${{ matrix.python-version }}, pipecat-ai ${{ matrix.pipecat }})
     needs: python-versions
     runs-on: ubuntu-latest
@@ -69,6 +69,13 @@ jobs:
           - python-version: ${{ needs.python-versions.outputs.default-python }}
             pipecat: '0.0.91'
             pipecat-spec: pipecat-ai==0.0.91
+          # An agent image may pin its own pipecatcloud. 0.4.4, which the image
+          # shipped through 0.1.32, differs from 1.x where the image's checks
+          # care: it imports pipecat-ai as it loads, and calls pipecat-ai's
+          # __post_init__ itself.
+          - python-version: ${{ needs.python-versions.outputs.default-python }}
+            pipecat: floor + pipecatcloud 0.4.4
+            pipecat-spec: pipecat-ai==0.0.78,pipecatcloud==0.4.4
     steps:
       - uses: actions/checkout@v4
 

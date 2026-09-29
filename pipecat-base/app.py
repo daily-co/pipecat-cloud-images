@@ -318,16 +318,9 @@ def _cancellation_requested_on_self() -> bool:
 
     Distinguishes "we cancelled the bot" from "someone cancelled us", which
     matters while the bot is unwinding after the budget fired.
-
-    ``Task.cancelling()`` is 3.11+. Base images are built for 3.10 too (the
-    default is 3.12), so on 3.10 we cannot tell the two apart and fall back to
-    treating the cancellation as ours. The cost is confined to a teardown that
-    lands inside the bot's unwind window — a few tens of milliseconds — on a pod
-    that is going away regardless.
     """
     task = asyncio.current_task()
-    cancelling = getattr(task, "cancelling", None)
-    return bool(cancelling and cancelling())
+    return bool(task and task.cancelling())
 
 
 async def _run_bot_with_budget(args: SessionArguments) -> None:
