@@ -1,12 +1,15 @@
 [project]
 name = "pipecat-base"
-version = "0.1.32"
+version = "0.2.0"
 description = "Pipecat Cloud Base Image"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "fastapi[standard]>=0.115.6,<1",
     "loguru~=0.7.3",
-    "pipecatcloud>=0.4.4",
+    # pipecatcloud 1.x declares pipecat-ai 1.0.0 for its agent types, but they
+    # build on 0.0.78 and newer, which this image supports; the floor legs in
+    # .github/workflows/test.yml keep that true when either is upgraded.
+    "pipecatcloud>=1.2.0",
     "pip>=26.1",
     "nltk>=3.10.0,<4",
 ]

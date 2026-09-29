@@ -4,7 +4,7 @@ import inspect
 from dataclasses import dataclass
 from enum import Enum
 from os import environ
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from loguru import logger
 
@@ -40,8 +40,11 @@ class FeatureInfo:
 
 
 class FeatureManager:
-    def __init__(self):
+    def __init__(self, unavailable: Optional[Dict[FeatureKeys, str]] = None):
+        """``unavailable``: features to report disabled, each with why, whatever
+        detection would find; the features that depend on them follow."""
         self.features: Dict[FeatureKeys, FeatureInfo] = {}
+        self._unavailable = unavailable or {}
         self._create_default_features()
         self._detect_features()
 
@@ -85,6 +88,16 @@ class FeatureManager:
         feature_key = FeatureKeys.SMALL_WEBRTC_SESSION
         feature_name = "SmallWebRTC Session Arguments"
         version_required = "pipecatcloud>=0.2.5"
+
+        if feature_key in self._unavailable:
+            self.features[feature_key] = self._create_feature_info(
+                feature_key,
+                feature_name,
+                version_required,
+                status=FeatureStatus.DISABLED,
+                error_message=self._unavailable[feature_key],
+            )
+            return
 
         try:
             from pipecatcloud import SmallWebRTCSessionManager

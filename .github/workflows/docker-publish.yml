@@ -40,6 +40,12 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          # The engine's own builder, which reads and writes the local image
+          # store: the agent-image step below builds FROM the image this job
+          # builds first. The action's default, a docker-container builder,
+          # would look for that image in a registry.
+          driver: docker
 
       - name: Build (runner arch, loaded locally)
         uses: docker/build-push-action@v5
@@ -56,12 +62,24 @@ jobs:
             VERSION=signal-check
             PYTHON_VERSION=${{ needs.find-images.outputs.default-python }}
 
+      - name: Build an agent image on it
+        # app.py refuses to start without pipecat-ai, which the base image
+        # leaves to the agent image; add it the way the README tells an agent
+        # image to. Pinned so the gate does not move with pipecat-ai releases;
+        # test.yml covers pipecat-ai compatibility. pipecat-ai 1.x needs Python
+        # 3.11 or newer, which default_python in versions.yaml is.
+        run: |
+          docker build -t pipecat-base:signal-check-agent - <<'EOF'
+          FROM pipecat-base:signal-check
+          RUN pip install --no-cache-dir pipecat-ai==1.12.0
+          EOF
+
       - name: Run container signal checks
         working-directory: pipecat-base
         # Asserts Python is not PID 1, that a SIGTERM during startup terminates
         # the container both under tini and with tini bypassed, and that a
         # graceful shutdown still reports exit 0 (PCC-1004). Stdlib only.
-        run: python3 container_signal_check.py pipecat-base:signal-check
+        run: python3 container_signal_check.py pipecat-base:signal-check-agent
 
   build-base:
     runs-on: ubuntu-24.04-arm

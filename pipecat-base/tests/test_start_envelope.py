@@ -208,7 +208,9 @@ class TestSmallWebRTCDetour:
                 return None
 
         monkeypatch.setitem(app.GLOBALS, "session_manager", _Manager())
-        args = app.PipecatSessionArguments(session_id="sess-1241", body={"u": 1})
+        args = app.pcc_pipecat_compat.build(
+            app.PipecatSessionArguments, session_id="sess-1241", body={"u": 1}
+        )
         app._attach_flow_config(args, FLOW)
 
         await app.run_bot(args, "webrtc")
@@ -242,8 +244,8 @@ class TestSmallWebRTCDetour:
         monkeypatch.setitem(app.GLOBALS, "pipecat_session_body", {"u": 1})
         monkeypatch.setitem(app.GLOBALS, app._FLOW_CONFIG_KEY, FLOW)
 
-        args = SmallWebRTCSessionArguments(
-            session_id="sess-1241", webrtc_connection=None, body=None
+        args = app.pcc_pipecat_compat.build(
+            SmallWebRTCSessionArguments, session_id="sess-1241", webrtc_connection=None, body=None
         )
         await app.run_bot(args)
 
@@ -267,7 +269,9 @@ class TestSmallWebRTCDetour:
                 return None
 
         monkeypatch.setitem(app.GLOBALS, "session_manager", _Manager())
-        args = app.PipecatSessionArguments(session_id="sess-1241", body={"u": 1})
+        args = app.pcc_pipecat_compat.build(
+            app.PipecatSessionArguments, session_id="sess-1241", body={"u": 1}
+        )
         app._attach_flow_config(args, FLOW)
 
         with pytest.raises(TimeoutError):
