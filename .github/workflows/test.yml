@@ -24,14 +24,13 @@ jobs:
         # setup-uv publishes no moving major tags since v8, so it is pinned.
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
 
-      - name: Sync dependencies
-        run: uv sync
-
+      # Run from the repo root so ruff covers local-test too, with the
+      # settings in ruff.toml; pipecat-base's dev group pins ruff.
       - name: Ruff format check
-        run: uv run ruff format --diff --check
+        run: uv run --project pipecat-base --locked ruff format --diff --check
 
       - name: Ruff lint
-        run: uv run ruff check
+        run: uv run --project pipecat-base --locked ruff check
 
   python-versions:
     runs-on: ubuntu-latest
@@ -48,9 +47,9 @@ jobs:
           echo "default-python=$(yq '.base.default_python' versions.yaml)" >> "$GITHUB_OUTPUT"
 
   test:
-    # The suite runs against the lock the images ship, with the customer's
-    # pipecat-ai layered over it: the oldest the image supports, and the newest
-    # that Python can install.
+    # The suite runs against the lock the images ship, plus its dev group
+    # (pytest), with the customer's pipecat-ai layered over it: the oldest the
+    # image supports, and the newest that Python can install.
     name: test (Python ${{ matrix.python-version }}, pipecat-ai ${{ matrix.pipecat }})
     needs: python-versions
     runs-on: ubuntu-latest
@@ -88,9 +87,7 @@ jobs:
           cache-suffix: ${{ matrix.pipecat }}
 
       - name: Pytest
+        working-directory: pipecat-base
         env:
           PIPECAT_SPEC: ${{ matrix.pipecat-spec }}
-        run: >-
-          uv run --project pipecat-base --locked --no-dev
-          --with 'pytest~=8.4' --with "$PIPECAT_SPEC"
-          pytest -q
+        run: uv run --locked --with "$PIPECAT_SPEC" pytest -q
