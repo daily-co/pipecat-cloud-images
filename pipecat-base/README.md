@@ -93,8 +93,9 @@ When using this base image, your project must:
    - `/bot` endpoint for HTTP-based agents (Daily.co integration)
    - `/ws` endpoint for WebSocket-based agents (Twilio, custom WebSocket)
    - `/pcc/capabilities`, which tells Pipecat Cloud what the agent can serve.
-     The path is reserved: the image answers it before the request reaches
-     your app, so a route your bot module adds there is never called.
+     The path is reserved: the image answers HTTP requests for it before they
+     reach your app, so an HTTP route your bot module adds there is never
+     called.
 2. When Pipecat Cloud receives a request to start your agent, it calls the appropriate endpoint
 3. The base image invokes your `bot()` function, passing room details and config
 4. Your agent code runs in its own process, managed by the platform
@@ -134,7 +135,8 @@ To release a new version of the base image:
 
    Below 1.0.0, a breaking change bumps the minor version, as
    [Semantic Versioning](https://semver.org/#how-should-i-deal-with-revisions-in-the-0yz-initial-development-phase)
-   allows for 0.y.z releases, and everything else bumps the patch version.
+   allows for 0.y.z releases, and everything else bumps the patch version. From
+   1.0.0, a breaking change bumps the major version (`--bump major`).
 
 2. **Update the lock file**:
 

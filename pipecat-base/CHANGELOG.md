@@ -34,8 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The image builds the document once, when it starts, so it describes the
   configuration your agent started with.
 
-  The path is reserved for the platform: the image answers it before a
-  request reaches your app, so a route your bot module adds at
+  The path is reserved for the platform: the image answers HTTP requests for
+  it before they reach your app, so an HTTP route your bot module adds at
   `/pcc/capabilities` is never called.
 
 ## [0.2.0] - 2026-09-29

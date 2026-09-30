@@ -22,16 +22,19 @@ The document::
   line, printable, with no square brackets (the platform's CLI reads those as
   markup); the whole body up to 16 KiB.
 
-The platform checks the same limits and rejects a document that breaks them,
-so this image checks its own before serving it, and cleans every reason it
-quotes from an error. Its own check is the stricter one: reasons and values in
+The format and these limits are the platform's, and its check is the one that
+decides: it rejects a document that breaks them, which then counts for nothing.
+They are copied here so that this image checks its own document before serving
+it, and cleans every reason it quotes from an error; changing one is a change
+on both sides. Its own check is the stricter one: reasons and values in
 printable ASCII, which any reading of "printable" accepts, whatever Unicode
 version the reader's is.
 
 The document is built once, at startup, and served from memory. It is served
 in front of the application, not by it: the bot module shares app.py's FastAPI
 app and is imported before app.py adds its routes, so a route or middleware it
-registered on this path would otherwise be reached first.
+registered on this path would otherwise be reached first. Only HTTP requests
+are answered there; a websocket on the path still reaches the application.
 """
 
 import json
@@ -111,7 +114,7 @@ def _first_unavailable(features: FeatureManager, keys) -> Optional[str]:
         if info is None:
             return text(f"{key.value} was not detected")
         if info.status != FeatureStatus.ENABLED:
-            return text(info.error_message) or text(f"{info.name} is {info.status.value}")
+            return text(info.error_message) or text(f"{key.value} is {info.status.value}")
     return None
 
 
@@ -185,32 +188,35 @@ def render(capabilities: Dict[str, Dict[str, Any]]) -> bytes:
 
 
 def serve(app: ASGIApp, body: Optional[bytes]) -> ASGIApp:
-    """``app``, with ``body`` served at PATH in front of it.
+    """``app``, with HTTP requests for PATH answered in front of it.
 
-    With no body there is nothing to report, and ``app`` is returned as it is:
-    the platform reads a missing document as an image that does not report.
+    The path is the image's whether or not there is a document. With no
+    ``body`` there is nothing to report, and the answer is 404, which the
+    platform reads as it reads an older image's: an image that does not
+    report. A route the bot module added there is never reached either way.
     """
-    if body is None:
-        return app
-
-    ok: List = [
-        (b"content-type", b"application/json"),
-        (b"content-length", str(len(body)).encode("ascii")),
-        (b"cache-control", b"no-store"),
-    ]
+    ok: List = []
+    if body is not None:
+        ok = [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode("ascii")),
+            (b"cache-control", b"no-store"),
+        ]
     not_allowed: List = [(b"allow", b"GET, HEAD"), (b"content-length", b"0")]
+    not_found: List = [(b"content-length", b"0")]
 
     async def with_capabilities(scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope["path"] != PATH:
             await app(scope, receive, send)
             return
-        if scope["method"] in ("GET", "HEAD"):
-            await send({"type": "http.response.start", "status": 200, "headers": ok})
-            await send(
-                {"type": "http.response.body", "body": body if scope["method"] == "GET" else b""}
-            )
-            return
-        await send({"type": "http.response.start", "status": 405, "headers": not_allowed})
-        await send({"type": "http.response.body", "body": b""})
+        if body is None:
+            status, headers, payload = 404, not_found, b""
+        elif scope["method"] in ("GET", "HEAD"):
+            status, headers = 200, ok
+            payload = body if scope["method"] == "GET" else b""
+        else:
+            status, headers, payload = 405, not_allowed, b""
+        await send({"type": "http.response.start", "status": status, "headers": headers})
+        await send({"type": "http.response.body", "body": payload})
 
     return with_capabilities

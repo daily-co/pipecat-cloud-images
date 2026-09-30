@@ -49,13 +49,18 @@ def _features(overrides=None, missing=()):
     ``missing``."""
     features = FeatureManager.__new__(FeatureManager)
     features._unavailable = {}
+    # feature_manager gives each feature a display name ("WhatsApp
+    # Integration") that is not its key; so does this, so a reason that
+    # names one or the other shows which.
     features.features = {
-        key: FeatureInfo(name=key.value, status=FeatureStatus.ENABLED)
+        key: FeatureInfo(name=f"Display {key.value}", status=FeatureStatus.ENABLED)
         for key in FeatureKeys
         if key not in missing
     }
     for key, (status, message) in (overrides or {}).items():
-        features.features[key] = FeatureInfo(name=key.value, status=status, error_message=message)
+        features.features[key] = FeatureInfo(
+            name=f"Display {key.value}", status=status, error_message=message
+        )
     return features
 
 
@@ -349,9 +354,23 @@ class TestServe:
         with self._client(inner).websocket_connect(pcc_capabilities.PATH) as socket:
             assert socket.receive_text() == "app"
 
-    def test_nothing_to_report_serves_nothing(self):
+    def test_nothing_to_report_still_keeps_the_path(self):
         inner = FastAPI()
-        assert pcc_capabilities.serve(inner, None) is inner
+
+        @inner.get(pcc_capabilities.PATH)
+        async def customer():
+            return PlainTextResponse("customer")
+
+        @inner.get("/other")
+        async def other():
+            return {"from": "app"}
+
+        client = TestClient(pcc_capabilities.serve(inner, None))
+        for method in ("GET", "HEAD", "POST"):
+            response = client.request(method, pcc_capabilities.PATH)
+            assert response.status_code == 404
+            assert response.content == b""
+        assert client.get("/other").json() == {"from": "app"}
 
 
 class TestApp:
@@ -373,9 +392,10 @@ class TestApp:
         assert "./pcc_capabilities.py" in copy
 
     def test_a_fault_building_the_document_serves_without_it(self, tmp_path):
-        # A bot module that breaks the entries and, as a bot module may,
-        # removes loguru's handlers at import: the image still starts, serves
-        # without the document, and says why once logging is set up.
+        # A bot module that breaks the entries, serves its own document at the
+        # path, and, as a bot module may, removes loguru's handlers at import:
+        # the image still starts, answers the path with 404 rather than the
+        # bot's document, and says why once logging is set up.
         bot = tmp_path / "bot"
         bot.mkdir()
         (bot / "bot.py").write_text(
@@ -386,6 +406,7 @@ class TestApp:
                 # run, nothing adds one back until app.py sets logging up.
                 import pipecatcloud
                 from loguru import logger
+                from pipecatcloud_system import app
 
 
                 def _broken(features):
@@ -396,19 +417,32 @@ class TestApp:
                 logger.remove()
 
 
+                @app.get(pcc_capabilities.PATH)
+                async def forged():
+                    return {"forged": True}
+
+
                 async def bot(args):
                     pass
                 """
             )
         )
+        check = textwrap.dedent(
+            """
+            import app
+            from fastapi.testclient import TestClient
+            import pcc_capabilities
+
+            response = TestClient(app.server_config.app).get(pcc_capabilities.PATH)
+            assert response.status_code == 404, (response.status_code, response.text)
+            assert b"forged" not in response.content
+            print("SERVING WITHOUT")
+            """
+        )
         env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PCC_LOG_DIR")}
         env["PYTHONPATH"] = os.pathsep.join([str(Path(app.__file__).parent), str(bot)])
         proc = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import app; assert app.server_config.app is app.app; print('SERVING WITHOUT')",
-            ],
+            [sys.executable, "-c", check],
             env=env,
             capture_output=True,
             text=True,
