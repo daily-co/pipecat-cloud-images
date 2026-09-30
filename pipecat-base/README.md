@@ -92,6 +92,9 @@ When using this base image, your project must:
 1. The base image exposes an HTTP API on port 8080 with:
    - `/bot` endpoint for HTTP-based agents (Daily.co integration)
    - `/ws` endpoint for WebSocket-based agents (Twilio, custom WebSocket)
+   - `/pcc/capabilities`, which tells Pipecat Cloud what the agent can serve.
+     The path is reserved: the image answers it before the request reaches
+     your app, so a route your bot module adds there is never called.
 2. When Pipecat Cloud receives a request to start your agent, it calls the appropriate endpoint
 3. The base image invokes your `bot()` function, passing room details and config
 4. Your agent code runs in its own process, managed by the platform

@@ -47,6 +47,7 @@ from bot import bot
 # warnings are logged once logging is set up below.
 _session_types = pcc_pipecat_compat.check_session_types()
 
+import pcc_capabilities
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request, WebSocket
 from fastapi.responses import JSONResponse
 from fastapi.websockets import WebSocketState
@@ -103,9 +104,23 @@ log_features_summary = environ.get("PCC_LOG_FEATURES_SUMMARY", "False").lower() 
 if log_features_summary:
     feature_manager.log_features_summary()
 
+# What this image can serve, for the platform to read once per deployment
+# (pcc_capabilities), built from what was found above. A fault building it
+# leaves the image serving without it, which the platform reads as an image
+# that does not report, rather than stopping one that can serve sessions. Why
+# is logged below, once logging is set up.
+_capabilities_warning: Optional[str] = None
+try:
+    _capabilities = pcc_capabilities.render(pcc_capabilities.entries(feature_manager))
+except Exception as e:
+    _capabilities_warning = f"Not reporting capabilities: {e}"
+    _capabilities = None
+
 server_config = Config(
     float(environ.get("SHUTDOWN_TIMEOUT", 7200)),
-    app,
+    # The document is served in front of the app, where nothing the bot module
+    # adds to it can take the path over.
+    pcc_capabilities.serve(app, _capabilities),
     host="0.0.0.0",
     port=int(environ.get("PORT", 8080)),
 )
@@ -134,6 +149,8 @@ logger.configure(extra={"session_id": "NONE"})
 
 for _warning in _session_types.warnings:
     logger.warning(_warning)
+if _capabilities_warning:
+    logger.warning(_capabilities_warning)
 
 
 # Filter out noisy Kubernetes probe requests from uvicorn access logs

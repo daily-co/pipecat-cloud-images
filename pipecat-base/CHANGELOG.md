@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-30
+
+### Added
+
+- The image now tells Pipecat Cloud what your agent can serve, at
+  `GET /pcc/capabilities`: Daily, WebSocket and SmallWebRTC sessions, and
+  WhatsApp, each with the reason when it cannot. Those depend on the pipecat-ai
+  and extras your agent image installs and on its configuration. The document
+  is for the platform, so that a session your agent cannot serve can be turned
+  away before it starts rather than fail once it has. For an agent built
+  without pipecat-ai's `webrtc` extra, which WhatsApp also needs:
+
+  ```json
+  {
+    "capabilities": {
+      "transport.daily": {"available": true},
+      "transport.webrtc": {"available": false, "reason": "No module named 'aiortc'"},
+      "transport.websocket": {"available": true},
+      "whatsapp": {"available": false, "reason": "Requires SmallWebRTCTransport to be enabled"}
+    },
+    "version": 1
+  }
+  ```
+
+  The image builds the document once, when it starts, so it describes the
+  configuration your agent started with.
+
+  The path is reserved for the platform: the image answers it before a
+  request reaches your app, so a route your bot module adds at
+  `/pcc/capabilities` is never called.
+
 ## [0.2.0] - 2026-09-29
 
 ### Changed
