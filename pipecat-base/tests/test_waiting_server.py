@@ -1,6 +1,6 @@
 """WaitingServer.shutdown() must honor should_exit_timeout for the tasks-wait loop.
 
-Regression test for PCC-989. A live bot session keeps a FastAPI BackgroundTask
+A live bot session keeps a FastAPI BackgroundTask
 in server_state.tasks for the whole session, so the tasks-wait loop must give up
 at should_exit_deadline. Before the fix it ignored the deadline and blocked until
 Kubernetes sent SIGKILL, which looked like SIGTERM being swallowed.

@@ -149,7 +149,7 @@ CRASH_CHILD = textwrap.dedent(
 
 
 def test_crash_tail_survives_hard_exit(tmp_path):
-    """PCC-1038: framework-lane lines written in the final microseconds before
+    """Framework-lane lines written in the final microseconds before
     os._exit must be on disk (synchronous line-buffered writes to the page
     cache) — with enqueue=True this deterministically loses the dying words.
     The captured stdout marker gets one pump beat (50ms) — the capture lane's
@@ -169,7 +169,7 @@ def test_crash_tail_survives_hard_exit(tmp_path):
     ]
     by_line = {r["line"]: r for r in records}
 
-    # The last framework record before death — the whole point of PCC-1038.
+    # The last framework record before death — the whole point of this test.
     dying = by_line["these are the dying words"]
     assert dying["level"] == "ERROR"
     assert dying["session_id"] == "sess-crash"

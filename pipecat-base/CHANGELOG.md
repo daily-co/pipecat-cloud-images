@@ -260,7 +260,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lines before a hard process death (`os._exit`, SIGKILL) now reach disk and
   ship with the crash tail. Captured stdout/stderr keep one async pump hop and
   remain best-effort in the final microseconds — dying words said through the
-  logger are guaranteed. (PCC-1038)
+  logger are guaranteed.
 
 ## [0.1.24] - 2026-07-27
 

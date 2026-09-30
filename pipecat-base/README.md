@@ -128,14 +128,13 @@ To release a new version of the base image:
 
    ```bash
    cd pipecat-base
-   uv version --bump patch --no-sync    # For bug fixes (0.1.1 → 0.1.2)
-   uv version --bump minor --no-sync    # For new features (0.1.1 → 0.2.0)
-   uv version --bump major --no-sync    # For breaking changes (1.2.3 → 2.0.0)
+   uv version --bump patch --no-sync    # For fixes and new features (0.2.0 → 0.2.1)
+   uv version --bump minor --no-sync    # For breaking changes (0.1.32 → 0.2.0)
    ```
 
-   Below 1.0.0, a breaking change bumps the minor version instead, as
+   Below 1.0.0, a breaking change bumps the minor version, as
    [Semantic Versioning](https://semver.org/#how-should-i-deal-with-revisions-in-the-0yz-initial-development-phase)
-   allows for 0.y.z releases (0.1.32 → 0.2.0).
+   allows for 0.y.z releases, and everything else bumps the patch version.
 
 2. **Update the lock file**:
 

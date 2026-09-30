@@ -39,7 +39,7 @@ COPY ./app.py ./waiting_server.py ./pipecatcloud_system.py ./feature_manager.py 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
-# tini holds PID 1 and runs the command as its child (PCC-1004). This also
+# tini holds PID 1 and runs the command as its child. This also
 # replaces the base image's `uv` entrypoint.
 #
 # The kernel does not apply default signal dispositions to PID 1: a signal with
