@@ -104,8 +104,8 @@ log_features_summary = environ.get("PCC_LOG_FEATURES_SUMMARY", "False").lower() 
 if log_features_summary:
     feature_manager.log_features_summary()
 
-# What this image can serve, for the platform to read once per deployment
-# (pcc_capabilities), built from what was found above. A fault building it
+# Which kinds of session this image rules out, for the platform to read once
+# per deployment (pcc_capabilities), built from what was found above. A fault building it
 # leaves the image serving without it, which the platform reads as an image
 # that does not report, rather than stopping one that can serve sessions. Why
 # is logged below, once logging is set up.

@@ -3,8 +3,8 @@
 The platform reads it once per deployment and rejects a document that breaks
 its limits, so the properties pinned here are:
 
-* **The entries follow what the image found at startup**, with the reason of
-  the first feature a capability lacks.
+* **The entries follow what the image found at startup** and the modules
+  installed, with the reason of the first thing a capability lacks.
 * **What is served always passes the limits**: every reason is cleaned, and a
   document that would break them is never served.
 * **The path belongs to the image**: a route or middleware the bot module adds
@@ -76,6 +76,33 @@ def _document(capabilities=None, **top):
 
 
 class TestEntries:
+    @pytest.fixture(autouse=True)
+    def _everything_installed(self, monkeypatch):
+        # Whatever this environment installed: each test says what is missing.
+        monkeypatch.setattr(pcc_capabilities, "_installed", lambda module: True)
+
+    def test_daily_needs_daily_python(self, monkeypatch):
+        monkeypatch.setattr(pcc_capabilities, "_installed", lambda module: module != "daily")
+        found = pcc_capabilities.entries(_features())
+        assert found["transport.daily"] == {
+            "available": False,
+            "reason": "No module named 'daily'",
+        }
+        assert all(found[name]["available"] for name in NAMES - {"transport.daily"})
+
+    def test_only_modules_the_image_does_not_import_are_looked_for(self, monkeypatch):
+        asked = []
+        monkeypatch.setattr(
+            pcc_capabilities, "_installed", lambda module: asked.append(module) or True
+        )
+        pcc_capabilities.entries(_features())
+        assert asked == ["daily"]
+
+    def test_a_route_that_is_not_set_up_comes_before_a_missing_module(self, monkeypatch):
+        monkeypatch.setattr(pcc_capabilities, "_installed", lambda module: False)
+        features = _features({FeatureKeys.DAILY_TRANSPORT: (FeatureStatus.DISABLED, "no route")})
+        assert pcc_capabilities.entries(features)["transport.daily"]["reason"] == "no route"
+
     def test_everything_found_is_available(self):
         assert pcc_capabilities.entries(_features()) == {
             name: {"available": True} for name in NAMES
@@ -148,6 +175,20 @@ class TestEntries:
     def test_what_this_environment_finds_renders(self):
         body = pcc_capabilities.render(pcc_capabilities.entries(FeatureManager()))
         assert set(json.loads(body)["capabilities"]) == NAMES
+
+
+class TestInstalled:
+    @pytest.mark.parametrize(
+        "module, installed",
+        [
+            ("json", True),
+            ("pcc_capabilities_surely_not_installed", False),
+            ("pcc_capabilities_surely_not_installed.child", False),
+            ("", False),
+        ],
+    )
+    def test_found_without_importing(self, module, installed):
+        assert pcc_capabilities._installed(module) is installed
 
 
 class TestText:

@@ -11,13 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- The image now tells Pipecat Cloud what your agent can serve, at
-  `GET /pcc/capabilities`: Daily, WebSocket and SmallWebRTC sessions, and
-  WhatsApp, each with the reason when it cannot. Those depend on the pipecat-ai
-  and extras your agent image installs and on its configuration. The document
-  is for the platform, so that a session your agent cannot serve can be turned
-  away before it starts rather than fail once it has. For an agent built
-  without pipecat-ai's `webrtc` extra, which WhatsApp also needs:
+- The image now tells Pipecat Cloud which kinds of session your agent image
+  rules out, at `GET /pcc/capabilities`: Daily, WebSocket and SmallWebRTC
+  sessions, and WhatsApp. Each is unavailable, with the reason, when the image
+  cannot route it to your bot or a module its transport needs is not
+  installed, such as daily-python (pipecat-ai's `daily` extra) for Daily. Those
+  depend on the pipecat-ai and extras your agent image installs and on its
+  configuration. The document is for the platform, so that a session that
+  cannot work can be turned away before it starts rather than fail once it
+  has. An available entry only means it is not ruled out: the image cannot
+  tell which sessions your `bot()` handles. For an agent built with
+  pipecat-ai's `daily` extra but not its `webrtc` extra, which WhatsApp also
+  needs:
 
   ```json
   {

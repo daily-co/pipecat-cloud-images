@@ -1,11 +1,16 @@
-"""What this image can serve, reported to the platform.
+"""Which kinds of session this image rules out, reported to the platform.
 
 The platform knows an agent's base image version from its image label, but not
-the pipecat-ai, pipecatcloud or extras the agent image installed on top of it,
-which decide what the agent can serve. The image works that out at startup
-(feature_manager, pcc_pipecat_compat); this module reports it at
-``GET /pcc/capabilities``, where the platform reads it once per deployment, so
-it can refuse what the agent cannot serve before a session starts.
+the pipecat-ai, pipecatcloud or extras the agent image installed on top of it.
+At startup the image works out which session types it can route to the bot
+(feature_manager, pcc_pipecat_compat) and whether the modules each transport
+needs are installed (checked here). This module reports that at
+``GET /pcc/capabilities``, where the platform reads it once per deployment.
+
+The document can only rule sessions out. ``available: false`` means a session
+of that kind cannot work on this image, so the platform can refuse it before it
+starts. ``available: true`` means only that it is not ruled out: the image
+cannot see which sessions the bot's own ``bot()`` handles.
 
 The document::
 
@@ -37,6 +42,7 @@ registered on this path would otherwise be reached first. Only HTTP requests
 are answered there; a websocket on the path still reaches the application.
 """
 
+import importlib.util
 import json
 import re
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -59,16 +65,24 @@ MAX_BODY_BYTES = 16 * 1024
 _NAME = re.compile(r"^[a-z0-9]+([._-][a-z0-9]+)*$")
 _ENTRY_FIELDS = {"available", "reason", "value"}
 
-# Each capability and the features it needs, all enabled. The first that is
-# not gives the reason.
+# Each capability, the features the image needs enabled to route it to the
+# bot, and the modules the bot needs installed to run it. The first missing
+# gives the reason.
+#
+# The modules are the ones the image does not import itself. Daily's route
+# needs nothing beyond pipecat-ai, but pipecat's DailyTransport needs
+# daily-python (pipecat-ai's `daily` extra). The WebSocket transport needs only
+# FastAPI, which the image ships, and the feature manager already imports
+# SmallWebRTC's modules, since the image's own /api/offer uses them.
 _CAPABILITIES = (
-    ("transport.daily", (FeatureKeys.DAILY_TRANSPORT,)),
-    ("transport.websocket", (FeatureKeys.WEBSOCKET_TRANSPORT,)),
+    ("transport.daily", (FeatureKeys.DAILY_TRANSPORT,), ("daily",)),
+    ("transport.websocket", (FeatureKeys.WEBSOCKET_TRANSPORT,), ()),
     (
         "transport.webrtc",
         (FeatureKeys.SMALL_WEBRTC_SESSION, FeatureKeys.SMALLWEBRTC_TRANSPORT),
+        (),
     ),
-    ("whatsapp", (FeatureKeys.WHATSAPP,)),
+    ("whatsapp", (FeatureKeys.WHATSAPP,), ()),
 )
 
 Scope = Dict[str, Any]
@@ -95,15 +109,33 @@ def _printable_ascii(c: str) -> bool:
 
 
 def entries(features: FeatureManager) -> Dict[str, Dict[str, Any]]:
-    """The capability entries for what ``features`` found at startup."""
+    """The capability entries for what ``features`` found at startup and the
+    modules installed."""
     result: Dict[str, Dict[str, Any]] = {}
-    for name, keys in _CAPABILITIES:
-        reason = _first_unavailable(features, keys)
+    for name, keys, modules in _CAPABILITIES:
+        reason = _first_unavailable(features, keys) or _first_missing(modules)
         if reason is None:
             result[name] = {"available": True}
         else:
             result[name] = {"available": False, "reason": reason}
     return result
+
+
+def _first_missing(modules) -> Optional[str]:
+    """The reason the first of ``modules`` that is not installed gives, worded
+    as the import would, or None when all are."""
+    for module in modules:
+        if not _installed(module):
+            return text(f"No module named '{module}'")
+    return None
+
+
+def _installed(module: str) -> bool:
+    """Whether ``module`` can be imported, found without importing it."""
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def _first_unavailable(features: FeatureManager, keys) -> Optional[str]:
