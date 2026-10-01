@@ -76,6 +76,13 @@ jobs:
           - python-version: ${{ needs.python-versions.outputs.default-python }}
             pipecat: floor + pipecatcloud 0.4.4
             pipecat-spec: pipecat-ai==0.0.78,pipecatcloud==0.4.4
+          # The only leg whose agent can take a MoQ session: pipecat-ai with
+          # its moq extra, over the pipecatcloud the image locks. Every other
+          # leg expects the image to report that it cannot.
+          - python-version: ${{ needs.python-versions.outputs.default-python }}
+            pipecat: latest + moq extra
+            pipecat-spec: pipecat-ai[moq]
+            expect-moq: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -91,4 +98,5 @@ jobs:
         working-directory: pipecat-base
         env:
           PIPECAT_SPEC: ${{ matrix.pipecat-spec }}
+          PCC_EXPECT_MOQ: ${{ matrix.expect-moq || '0' }}
         run: uv run --locked --no-dev --group test --with "$PIPECAT_SPEC" pytest -q

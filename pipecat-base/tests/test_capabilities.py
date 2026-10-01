@@ -40,7 +40,7 @@ if "bot" not in sys.modules:
 
 import app  # noqa: E402
 
-NAMES = {"transport.daily", "transport.websocket", "transport.webrtc", "whatsapp"}
+NAMES = {"transport.daily", "transport.websocket", "transport.webrtc", "transport.moq", "whatsapp"}
 
 
 def _features(overrides=None, missing=()):
@@ -96,7 +96,7 @@ class TestEntries:
             pcc_capabilities, "_installed", lambda module: asked.append(module) or True
         )
         pcc_capabilities.entries(_features())
-        assert asked == ["daily"]
+        assert asked == ["daily", "moq"]
 
     def test_a_route_that_is_not_set_up_comes_before_a_missing_module(self, monkeypatch):
         monkeypatch.setattr(pcc_capabilities, "_installed", lambda module: False)
@@ -134,6 +134,27 @@ class TestEntries:
             }
         )
         assert pcc_capabilities.entries(features)["transport.webrtc"]["reason"] == "first"
+
+    def test_moq_needs_its_session_arguments(self):
+        reason = "MoQ sessions need pipecat-ai 1.12.0 or newer with its moq extra"
+        features = _features({FeatureKeys.MOQ_SESSION: (FeatureStatus.DISABLED, reason)})
+        assert pcc_capabilities.entries(features)["transport.moq"] == {
+            "available": False,
+            "reason": reason,
+        }
+
+    def test_moq_needs_the_moq_extra(self, monkeypatch):
+        monkeypatch.setattr(pcc_capabilities, "_installed", lambda module: module != "moq")
+        found = pcc_capabilities.entries(_features())
+        assert found["transport.moq"] == {"available": False, "reason": "No module named 'moq'"}
+        assert all(found[name]["available"] for name in NAMES - {"transport.moq"})
+
+    def test_moq_session_arguments_that_do_not_build_turn_moq_off(self):
+        # app.py hands the feature manager pcc_pipecat_compat's reason.
+        features = FeatureManager(unavailable={FeatureKeys.MOQ_SESSION: "cannot build it"})
+        entries = pcc_capabilities.entries(features)
+        assert entries["transport.moq"] == {"available": False, "reason": "cannot build it"}
+        assert entries["transport.daily"] == {"available": True}
 
     def test_whatsapp_missing_its_configuration_is_unavailable(self):
         reason = "Missing environment variables: WHATSAPP_TOKEN"

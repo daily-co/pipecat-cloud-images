@@ -73,7 +73,10 @@ _ENTRY_FIELDS = {"available", "reason", "value"}
 # needs nothing beyond pipecat-ai, but pipecat's DailyTransport needs
 # daily-python (pipecat-ai's `daily` extra). The WebSocket transport needs only
 # FastAPI, which the image ships, and the feature manager already imports
-# SmallWebRTC's modules, since the image's own /api/offer uses them.
+# SmallWebRTC's modules, since the image's own /api/offer uses them. MoQ's route
+# needs session arguments only pipecat-ai 1.12+ and pipecatcloud 1.3+ define,
+# and pipecat's MoQ transport needs moq-rs, imported as `moq` (pipecat-ai's
+# `moq` extra).
 _CAPABILITIES = (
     ("transport.daily", (FeatureKeys.DAILY_TRANSPORT,), ("daily",)),
     ("transport.websocket", (FeatureKeys.WEBSOCKET_TRANSPORT,), ()),
@@ -82,6 +85,7 @@ _CAPABILITIES = (
         (FeatureKeys.SMALL_WEBRTC_SESSION, FeatureKeys.SMALLWEBRTC_TRANSPORT),
         (),
     ),
+    ("transport.moq", (FeatureKeys.MOQ_SESSION,), ("moq",)),
     ("whatsapp", (FeatureKeys.WHATSAPP,), ()),
 )
 

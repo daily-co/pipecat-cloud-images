@@ -18,7 +18,11 @@ failing every session behind healthy probes:
   on stderr), which a bot module that removes the default handler at import
   would trip over, so this waits until the bot module has run. An optional
   type (SmallWebRTC's) that does not build refuses nothing: app.py serves
-  without it, as it does when the type is absent, and logs why.
+  without it, as it does when the type is absent, and logs why. MoQ's is
+  optional too, and needs newer pipecat-ai and pipecatcloud than the rest:
+  the check says why it cannot be built, for app.py to report to the
+  platform and to refuse a MoQ session with, and warns only when the agent
+  image installs pipecat-ai's moq extra, so wants MoQ.
 
 Both decide by what works, never by version number: pipecat-ai 0.0.77 builds
 on pipecatcloud 1.x but not on 0.4.4, which an agent image may pin, and a fork
@@ -122,6 +126,28 @@ _SESSION_TYPES = (
     ("SmallWebRTCSessionArguments", False, {"webrtc_connection": _PROBE}),
 )
 
+# What a MoQ session needs: pipecat-ai's MOQRunnerArguments with ``relay_url``
+# (the URL Pipecat Cloud hands the bot), and pipecatcloud's
+# MOQSessionArguments built on it. The moq extra, which the transport needs, is
+# checked where the image reports what it can serve (pcc_capabilities).
+MOQ_PIPECAT_VERSION = "1.12.0"
+MOQ_PIPECATCLOUD_VERSION = "1.3.0"
+
+# The ids Pipecat Cloud gives a MoQ session's two sides: the bot publishes as
+# "response" and subscribes to the browser's "request", as its /start response
+# tells the browser.
+MOQ_BOT_ID = "response"
+MOQ_PEER_ID = "request"
+
+# The fields /bot passes a MoQ session's arguments besides ``body``, with values
+# that pass pipecat-ai's dial-target check.
+_MOQ_FIELDS = {
+    "relay_url": "https://probe.invalid/",
+    "namespace": "probe",
+    "participant_id": MOQ_BOT_ID,
+    "peer_id": MOQ_PEER_ID,
+}
+
 # Tests replace this; see the module docstring for why it is not SystemExit.
 _exit: Callable[[int], NoReturn] = os._exit
 
@@ -185,10 +211,14 @@ class SessionTypes:
     ``warnings`` are for app.py to log once logging is set up. ``unbuildable``
     maps each optional session type that is present but does not build to why;
     app.py serves without it, as it would if the type were absent.
+    ``moq_unavailable`` is why a MoQ session's arguments cannot be built here,
+    or None when they can. Its default counts a check that never ran as
+    cannot, so a fault here never reports MoQ the image cannot serve.
     """
 
     warnings: List[str] = dataclasses.field(default_factory=list)
     unbuildable: Dict[str, str] = dataclasses.field(default_factory=dict)
+    moq_unavailable: Optional[str] = "the MoQ check did not run"
 
 
 def check_session_types() -> SessionTypes:
@@ -198,7 +228,9 @@ def check_session_types() -> SessionTypes:
     startup goes on.
     """
     try:
-        return _check_session_types(importlib.import_module, _installed_version)
+        return _check_session_types(
+            importlib.import_module, _installed_version, importlib.util.find_spec
+        )
     except Exception as e:
         _warn(f"The session arguments check did not run ({_describe(e)}).")
         return SessionTypes()
@@ -241,6 +273,7 @@ def _check_pipecat(
 def _check_session_types(
     import_module: Callable[[str], Any],
     installed_version: Callable[[str], Optional[str]],
+    find_spec: Callable[[str], Any],
 ) -> SessionTypes:
     pipecat_version = installed_version("pipecat-ai")
     pipecat = _label("pipecat-ai", pipecat_version)
@@ -291,6 +324,25 @@ def _check_session_types(
         if not takes_body(cls) and not issubclass(cls, runner_arguments):
             standalone_without_body.append(type_name)
 
+    # In its own try, so nothing here can cost the report the SmallWebRTC and
+    # deprecation findings above. The lookup of the extra is apart from it, so
+    # a check that faults is still warned about.
+    try:
+        moq_unavailable = _moq_unavailable(
+            agent, import_module("pipecat.runner.types"), pipecat, pipecatcloud
+        )
+    except Exception as e:
+        moq_unavailable = f"the MoQ check did not run ({_describe(e)})"
+    moq_extra = _found(find_spec, "moq")
+    report.moq_unavailable = _one_line(moq_unavailable) if moq_unavailable else None
+    # Said at startup only when the author evidently wants MoQ: an agent image
+    # without the moq extra has no use for it.
+    if report.moq_unavailable and moq_extra:
+        report.warnings.append(
+            "pipecat-ai's moq extra is installed, but the image reports MoQ sessions "
+            f"unavailable: {report.moq_unavailable}."
+        )
+
     if not takes_body(runner_arguments):
         subject = pipecat if pipecat_version else "The installed pipecat-ai"
         report.warnings.append(
@@ -307,6 +359,40 @@ def _check_session_types(
             "or newer, so upgrade it in the agent image, or leave pipecatcloud to the image."
         )
     return report
+
+
+def _moq_unavailable(
+    agent: Any, runner_types: Any, pipecat: str, pipecatcloud: str
+) -> Optional[str]:
+    """Why a MoQ session's arguments cannot be built here, or None when they can."""
+    moq_runner = getattr(runner_types, "MOQRunnerArguments", None)
+    has_relay_url = isinstance(moq_runner, type) and "relay_url" in getattr(
+        moq_runner, "__dataclass_fields__", {}
+    )
+    cls = getattr(agent, "MOQSessionArguments", None)
+    if not has_relay_url or not isinstance(cls, type):
+        # Every requirement, with what is installed, rather than a guess at
+        # which is short: pipecatcloud defines the type only on a pipecat-ai
+        # that has relay_url, so its absence alone does not say which is old.
+        return (
+            f"MoQ sessions need pipecat-ai {MOQ_PIPECAT_VERSION} or newer with its moq extra, "
+            f"and pipecatcloud {MOQ_PIPECATCLOUD_VERSION} or newer; this image has {pipecat} "
+            f"and {pipecatcloud}"
+        )
+    try:
+        build(cls, body={}, session_id="probe", **_MOQ_FIELDS)
+    except Exception as e:
+        return f"{pipecatcloud} with {pipecat} cannot build MOQSessionArguments ({_describe(e)})"
+    return None
+
+
+def _found(find_spec: Callable[[str], Any], module: str) -> bool:
+    """Whether ``module`` can be imported, found without importing it. Any
+    fault in the lookup, a broken import hook's included, is not found."""
+    try:
+        return find_spec(module) is not None
+    except Exception:
+        return False
 
 
 def _installed_version(distribution: str) -> Optional[str]:

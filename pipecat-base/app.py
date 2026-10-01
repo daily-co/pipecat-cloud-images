@@ -35,7 +35,8 @@ import stat
 import sys
 from contextlib import asynccontextmanager
 from os import environ
-from typing import Annotated, Callable, Dict, List, Optional, Union
+from typing import Annotated, Callable, Dict, List, NoReturn, Optional, Union
+from urllib.parse import unquote_plus, urlsplit
 
 import aiohttp
 import bot as bot_module
@@ -94,12 +95,14 @@ GLOBALS = {}
 
 # Initialize feature manager. A SmallWebRTC session type that does not build
 # turns SmallWebRTC off, as its absence does, rather than failing each session.
+# MoQ is off, with the check's reason, unless its session arguments build.
+_unavailable_features: Dict[FeatureKeys, str] = {}
 _smallwebrtc_unbuildable = _session_types.unbuildable.get("SmallWebRTCSessionArguments")
-feature_manager = FeatureManager(
-    unavailable={FeatureKeys.SMALL_WEBRTC_SESSION: _smallwebrtc_unbuildable}
-    if _smallwebrtc_unbuildable
-    else None
-)
+if _smallwebrtc_unbuildable:
+    _unavailable_features[FeatureKeys.SMALL_WEBRTC_SESSION] = _smallwebrtc_unbuildable
+if _session_types.moq_unavailable:
+    _unavailable_features[FeatureKeys.MOQ_SESSION] = _session_types.moq_unavailable
+feature_manager = FeatureManager(unavailable=_unavailable_features or None)
 log_features_summary = environ.get("PCC_LOG_FEATURES_SUMMARY", "False").lower() == "true"
 if log_features_summary:
     feature_manager.log_features_summary()
@@ -110,11 +113,35 @@ if log_features_summary:
 # that does not report, rather than stopping one that can serve sessions. Why
 # is logged below, once logging is set up.
 _capabilities_warning: Optional[str] = None
+_reported: Optional[Dict[str, Dict]] = None
 try:
-    _capabilities = pcc_capabilities.render(pcc_capabilities.entries(feature_manager))
+    _entries = pcc_capabilities.entries(feature_manager)
+    _capabilities = pcc_capabilities.render(_entries)
+    _reported = _entries
 except Exception as e:
     _capabilities_warning = f"Not reporting capabilities: {e}"
     _capabilities = None
+
+
+def _moq_unavailable_from(reported: Optional[Dict[str, Dict]]) -> Optional[str]:
+    """Why this image refuses a MoQ session, or None when it serves one.
+
+    What it reports for transport.moq, so that Pipecat Cloud, which refuses
+    the MoQ sessions an image rules out before they start, and this image's own
+    backstop never disagree. An image that reports nothing serves none.
+    """
+    entry = (reported or {}).get("transport.moq")
+    if entry and entry["available"]:
+        return None
+    return (entry or {}).get("reason") or "this image reports no MoQ support"
+
+
+_moq_unavailable = _moq_unavailable_from(_reported)
+_moq_session_type: Optional[type] = None
+if _moq_unavailable is None:
+    from pipecatcloud.agent import MOQSessionArguments
+
+    _moq_session_type = MOQSessionArguments
 
 server_config = Config(
     float(environ.get("SHUTDOWN_TIMEOUT", 7200)),
@@ -448,7 +475,10 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
         try:
             await _run_bot_with_budget(args)
         except Exception as e:
-            logger.error(f"Exception running bot(): {e}")
+            # A MoQ session's bot dials a relay URL that carries its token, and
+            # an error from the bot or its transport may quote it.
+            relay_url = getattr(args, "relay_url", None)
+            logger.error(f"Exception running bot(): {_without_relay_url(str(e), relay_url)}")
         finally:
             logger.info(f"Stopping bot session with metadata: {json.dumps(metadata)}")
             session_manager = GLOBALS.get("session_manager")
@@ -560,6 +590,104 @@ def _attach_flow_config(args: SessionArguments, flow_config: Optional[str]) -> N
     args.flow_config = flow_config
 
 
+# The transport-type value of a Media over QUIC session.
+_MOQ_TRANSPORT = "moq"
+
+
+def _refuse_moq_session(session_id: Optional[str], reason: str) -> NoReturn:
+    """Refuse a MoQ session's start, before bot() runs, with the reason.
+
+    A backstop: Pipecat Cloud refuses a MoQ session at its start for an image
+    that reports it cannot serve one, so this is reached only when a session
+    gets here anyway.
+    """
+    message = f"Refusing MoQ session {session_id}: {reason}"
+    with logger.contextualize(session_id=session_id):
+        logger.error(message)
+    raise HTTPException(status_code=400, detail=message)
+
+
+def _moq_session_arguments(
+    session_id: Optional[str],
+    relay_url: Optional[str],
+    namespace: Optional[str],
+    body,
+):
+    """Build a MoQ session's arguments, or refuse its start.
+
+    The relay URL carries the session's token, so it never reaches a log line
+    or the refusal: an error's text is scrubbed of it, and the refusal is
+    raised outside the except block, so the error does not ride along on it.
+    """
+    if _moq_session_type is None:
+        _refuse_moq_session(session_id, _moq_unavailable or "MoQ is unavailable in this image")
+    if not relay_url or not namespace:
+        _refuse_moq_session(
+            session_id,
+            "its start carries no relay URL or namespace (X-Moq-Relay-Url, X-Moq-Namespace)",
+        )
+    # Worked out before the build, so nothing in the except block below can
+    # raise and carry the unscrubbed error along.
+    secrets = _relay_url_secrets(relay_url)
+    try:
+        return pcc_pipecat_compat.build(
+            _moq_session_type,
+            session_id=session_id,
+            relay_url=relay_url,
+            namespace=namespace,
+            participant_id=pcc_pipecat_compat.MOQ_BOT_ID,
+            peer_id=pcc_pipecat_compat.MOQ_PEER_ID,
+            body=body,
+        )
+    except Exception as e:
+        detail = f"{type(e).__name__}: {e}"
+        for secret in secrets:
+            detail = detail.replace(secret, "<relay URL>")
+        detail = pcc_capabilities.text(detail)
+    _refuse_moq_session(session_id, f"its session arguments did not build ({detail})")
+
+
+# A part of the URL this short is no token, and replacing it everywhere would
+# blank every stray "1" in an error.
+_MIN_SECRET_CHARS = 8
+
+
+def _relay_url_secrets(relay_url: str) -> List[str]:
+    """The relay URL, and every part of it that carries the token, longest
+    first: an error may quote the query, or one value, alone, as written in
+    the URL or decoded. A URL that does not parse is replaced whole."""
+    parts: List[str] = []
+    try:
+        url = urlsplit(relay_url)
+        parts += [url.query, url.fragment]
+        for pair in url.query.split("&"):
+            value = pair.partition("=")[2]
+            parts += [value, unquote_plus(value)]
+    except ValueError:
+        pass
+    secrets = {relay_url, *(part for part in parts if len(part) >= _MIN_SECRET_CHARS)}
+    # Longest first, so a part never leaves a piece of the whole behind.
+    return sorted(secrets, key=len, reverse=True)
+
+
+def _without_relay_url(text: str, relay_url: Optional[str]) -> str:
+    """``text`` with the relay URL, and every part of it that carries the
+    token, replaced. Unchanged for a session that has no relay URL.
+
+    Never raises: it runs in except blocks, where an error of its own would
+    carry the unscrubbed one along. A relay URL it cannot read, which only a
+    bot that replaced its own could hand it, withholds the text instead.
+    """
+    if not relay_url:
+        return text
+    try:
+        for secret in _relay_url_secrets(relay_url):
+            text = text.replace(secret, "<relay URL>")
+        return text
+    except Exception:
+        return "<withheld: it could not be checked for the relay URL>"
+
+
 # ------------------------------------------------------------
 # Basic routes (always available)
 # ------------------------------------------------------------
@@ -572,6 +700,8 @@ async def handle_bot_request(
     x_daily_transport_type: Annotated[str | None, Header()] = None,
     x_pcc_max_session_seconds: Annotated[str | None, Header()] = None,
     x_pcc_start_envelope: Annotated[str | None, Header()] = None,
+    x_moq_relay_url: Annotated[str | None, Header()] = None,
+    x_moq_namespace: Annotated[str | None, Header()] = None,
 ):
     # Stashed rather than passed down because SmallWebRTC runs the bot from a
     # different request: this one only waits for the WebRTC connection, and the
@@ -581,7 +711,9 @@ async def handle_bot_request(
 
     body, flow_config = _split_start_envelope(body, x_pcc_start_envelope)
 
-    if x_daily_room_url and x_daily_room_token:
+    if x_daily_transport_type == _MOQ_TRANSPORT:
+        args = _moq_session_arguments(x_daily_session_id, x_moq_relay_url, x_moq_namespace, body)
+    elif x_daily_room_url and x_daily_room_token:
         args = pcc_pipecat_compat.build(
             DailySessionArguments,
             session_id=x_daily_session_id,
