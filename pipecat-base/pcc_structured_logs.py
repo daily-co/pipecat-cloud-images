@@ -109,6 +109,15 @@ def set_current_session(session_id):
         _current_session_id = session_id
 
 
+def current_session():
+    """The session owning the pod right now, or None between sessions.
+
+    The slot `set_current_session` keeps, for anything that needs to name the
+    session a line or a record belongs to.
+    """
+    return _current_session_id
+
+
 @contextmanager
 def session_scope(session_id):
     """Attribute captured stdout/stderr to *session_id* for the block's span.
