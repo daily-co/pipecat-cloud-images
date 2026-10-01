@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Bumped minimum `nltk` from `>=3.10.0` to `>=3.10.3` and `pip` from `>=26.1`
-  to `>=26.2`.
+  to `>=26.2`, and declared `aiohttp>=3.14.3,<4`, which the image imports
+  directly and previously took from `pipecatcloud`.
 
 ### Security
 

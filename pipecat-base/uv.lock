@@ -893,6 +893,7 @@ name = "pipecat-base"
 version = "0.2.3"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "fastapi", extra = ["standard"] },
     { name = "loguru" },
     { name = "nltk" },
@@ -914,6 +915,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.14.3,<4" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115.6,<1" },
     { name = "loguru", specifier = "~=0.7.3" },
     { name = "nltk", specifier = ">=3.10.3,<4" },
@@ -923,11 +925,11 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "pytest", specifier = "~=9.0,>=9.0.3" },
+    { name = "pytest", specifier = ">=9.0.3,<10" },
     { name = "ruff", specifier = "==0.12.12" },
 ]
 lint = [{ name = "ruff", specifier = "==0.12.12" }]
-test = [{ name = "pytest", specifier = "~=9.0,>=9.0.3" }]
+test = [{ name = "pytest", specifier = ">=9.0.3,<10" }]
 
 [[package]]
 name = "pipecatcloud"
