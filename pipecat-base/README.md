@@ -92,6 +92,11 @@ When using this base image, your project must:
 1. The base image exposes an HTTP API on port 8080 with:
    - `/bot` endpoint for HTTP-based agents (Daily.co integration)
    - `/ws` endpoint for WebSocket-based agents (Twilio, custom WebSocket)
+   - `/pcc/capabilities`, which tells Pipecat Cloud which kinds of session the
+     agent image rules out, so they can be turned away before they start.
+     The path is reserved: the image answers HTTP requests for it before they
+     reach your app, so an HTTP route your bot module adds there is never
+     called.
 2. When Pipecat Cloud receives a request to start your agent, it calls the appropriate endpoint
 3. The base image invokes your `bot()` function, passing room details and config
 4. Your agent code runs in its own process, managed by the platform
@@ -125,14 +130,14 @@ To release a new version of the base image:
 
    ```bash
    cd pipecat-base
-   uv version --bump patch --no-sync    # For bug fixes (0.1.1 → 0.1.2)
-   uv version --bump minor --no-sync    # For new features (0.1.1 → 0.2.0)
-   uv version --bump major --no-sync    # For breaking changes (1.2.3 → 2.0.0)
+   uv version --bump patch --no-sync    # For fixes and new features (0.2.0 → 0.2.1)
+   uv version --bump minor --no-sync    # For breaking changes (0.1.32 → 0.2.0)
    ```
 
-   Below 1.0.0, a breaking change bumps the minor version instead, as
+   Below 1.0.0, a breaking change bumps the minor version, as
    [Semantic Versioning](https://semver.org/#how-should-i-deal-with-revisions-in-the-0yz-initial-development-phase)
-   allows for 0.y.z releases (0.1.32 → 0.2.0).
+   allows for 0.y.z releases, and everything else bumps the patch version. From
+   1.0.0, a breaking change bumps the major version (`--bump major`).
 
 2. **Update the lock file**:
 

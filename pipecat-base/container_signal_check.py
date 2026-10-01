@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Container-level check that the base image handles SIGTERM during startup.
 
-PCC-1004. The kernel does not apply default signal dispositions to PID 1: a
+The kernel does not apply default signal dispositions to PID 1: a
 signal with no registered handler is discarded rather than terminating the
 process. The image's CMD execs Python into PID 1, and uvicorn only installs its
 SIGTERM handler after every module-level import — the customer's bot module
@@ -89,7 +89,7 @@ def sigterm_and_wait(cid: str) -> int | None:
     """SIGTERM the container and return its exit code, or None if it survived.
 
     Anything that stops us finding out — docker itself failing — raises instead,
-    so an infrastructure blip is never reported as the PCC-1004 regression.
+    so an infrastructure blip is never reported as the startup-SIGTERM regression.
     """
     sh(["docker", "kill", "-s", "TERM", cid])
     try:
@@ -152,7 +152,7 @@ def check_python_is_not_pid1(image: str) -> None:
     assert pid != "1", (
         "Python is running as PID 1. The kernel discards unhandled signals to PID 1, "
         "so a SIGTERM arriving before the handler is installed would be silently "
-        "dropped and the container would keep serving on a deleted pod (PCC-1004). "
+        "dropped and the container would keep serving on a deleted pod. "
         "Check the ENTRYPOINT still runs the command under tini."
     )
     print(f"  ok: python runs as pid {pid}, not pid 1")
@@ -162,7 +162,7 @@ def check_unhandled_sigterm_terminates_as_clean_exit(image: str) -> None:
     code, out = run_script_and_sigterm(image, NO_HANDLER)
     assert code is not None, (
         "container SURVIVED a SIGTERM sent while no handler was installed. This is "
-        "the PCC-1004 regression: the process would go on to start and serve on a "
+        "the startup-SIGTERM regression: the process would go on to start and serve on a "
         f"deleted pod until the grace deadline.\n{out}"
     )
     assert code == 0, (

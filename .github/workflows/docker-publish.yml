@@ -130,7 +130,7 @@ jobs:
         working-directory: pipecat-base
         # Asserts Python is not PID 1, that a SIGTERM during startup terminates
         # the container both under tini and with tini bypassed, and that a
-        # graceful shutdown still reports exit 0 (PCC-1004). Stdlib only.
+        # graceful shutdown still reports exit 0. Stdlib only.
         run: python3 container_signal_check.py pipecat-base:signal-check-agent
 
   build-base:

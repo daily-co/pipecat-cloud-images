@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-30
+
+### Added
+
+- The image now tells Pipecat Cloud which kinds of session your agent image
+  rules out, at `GET /pcc/capabilities`: Daily, WebSocket and SmallWebRTC
+  sessions, and WhatsApp. Each is unavailable, with the reason, when the image
+  cannot route it to your bot or a module its transport needs is not
+  installed, such as daily-python (pipecat-ai's `daily` extra) for Daily. Those
+  depend on the pipecat-ai and extras your agent image installs and on its
+  configuration. The document is for the platform, so that a session that
+  cannot work can be turned away before it starts rather than fail once it
+  has. An available entry only means it is not ruled out: the image cannot
+  tell which sessions your `bot()` handles. For an agent built with
+  pipecat-ai's `daily` extra but not its `webrtc` extra, which WhatsApp also
+  needs:
+
+  ```json
+  {
+    "capabilities": {
+      "transport.daily": {"available": true},
+      "transport.webrtc": {"available": false, "reason": "No module named 'aiortc'"},
+      "transport.websocket": {"available": true},
+      "whatsapp": {"available": false, "reason": "Requires SmallWebRTCTransport to be enabled"}
+    },
+    "version": 1
+  }
+  ```
+
+  The image builds the document once, when it starts, so it describes the
+  configuration your agent started with.
+
+  The path is reserved for the platform: the image answers HTTP requests for
+  it before they reach your app, so an HTTP route your bot module adds at
+  `/pcc/capabilities` is never called.
+
 ## [0.2.0] - 2026-09-29
 
 ### Changed
@@ -229,7 +265,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lines before a hard process death (`os._exit`, SIGKILL) now reach disk and
   ship with the crash tail. Captured stdout/stderr keep one async pump hop and
   remain best-effort in the final microseconds — dying words said through the
-  logger are guaranteed. (PCC-1038)
+  logger are guaranteed.
 
 ## [0.1.24] - 2026-07-27
 

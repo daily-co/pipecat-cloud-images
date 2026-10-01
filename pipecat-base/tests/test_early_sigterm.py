@@ -1,7 +1,7 @@
 """pcc_early_sigterm: a SIGTERM during startup must terminate the process, and
 one the server has already handled must be absorbed.
 
-PCC-1004. Each test runs a child interpreter, because the behaviour under test
+Each test runs a child interpreter, because the behaviour under test
 is what happens to the *process* on a signal: whether it exits, with which code,
 and whether its final line reaches stderr. Python is not PID 1 here, so the
 default disposition would already kill the child — which is exactly what makes

@@ -1,4 +1,4 @@
-"""Terminate on a SIGTERM that arrives before the server is up (PCC-1004).
+"""Terminate on a SIGTERM that arrives before the server is up.
 
 uvicorn installs its SIGTERM handler inside Server.serve(), after every
 module-level import in app.py — the customer's bot module included, whose
@@ -54,7 +54,7 @@ from datetime import datetime
 _MESSAGE = "SIGTERM received before the server was up; nothing to drain, exiting"
 
 # One beat of pcc_structured_logs' pump threads: the capture lane's documented
-# best-effort hop between a print() and the JSONL file (PCC-1038).
+# best-effort hop between a print() and the JSONL file.
 _PUMP_BEAT_SECONDS = 0.05
 
 # Set by defer_to_server(): returns True once the server has taken a SIGTERM

@@ -34,12 +34,12 @@ RUN VENV_SITE_PACKAGES=$(/app/.venv/bin/python -c "import site; print(site.getsi
 COPY ./THIRD_PARTY_NOTICES.md ./third-party/uv-LICENSE-APACHE ./third-party/uv-LICENSE-MIT /usr/share/doc/pipecat-base/
 
 # Copy application files
-COPY ./app.py ./waiting_server.py ./pipecatcloud_system.py ./feature_manager.py ./pcc_observers.py ./pcc_structured_logs.py ./pcc_early_sigterm.py ./pcc_pipecat_compat.py /app/
+COPY ./app.py ./waiting_server.py ./pipecatcloud_system.py ./feature_manager.py ./pcc_observers.py ./pcc_structured_logs.py ./pcc_early_sigterm.py ./pcc_pipecat_compat.py ./pcc_capabilities.py /app/
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
-# tini holds PID 1 and runs the command as its child (PCC-1004). This also
+# tini holds PID 1 and runs the command as its child. This also
 # replaces the base image's `uv` entrypoint.
 #
 # The kernel does not apply default signal dispositions to PID 1: a signal with

@@ -1,4 +1,4 @@
-"""PCC-1066: the platform's session budget is enforced inside this process.
+"""The platform's session budget is enforced inside this process.
 
 Pipecat Cloud caps sessions at ``maxSessionDuration``, but the only thing it can
 do from outside is close its own request to us. When a session is started by an

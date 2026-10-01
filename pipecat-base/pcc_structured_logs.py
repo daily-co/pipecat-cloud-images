@@ -34,7 +34,7 @@ removes loguru's default sink before capturing, and every console sink must
 use ``console_stream()`` (the saved real stderr) with ``console_filter``
 (which also keeps captured lines from being displayed twice).
 
-Crash durability (PCC-1038): the file sink writes synchronously (one
+Crash durability: the file sink writes synchronously (one
 line-buffered ``write()`` per record into the OS page cache), so framework-lane
 lines survive a hard process death (``os._exit``, SIGKILL) the instant the
 ``logger.*`` call returns. Capture-lane lines have one unavoidable async hop —
@@ -161,7 +161,7 @@ def _serialize(record) -> str:
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     except Exception:
         # Never let serialization break logging; emit a marker record instead
-        # — one shaped like every other record (PCC-1190), so the query that
+        # — one shaped like every other record, so the query that
         # is actually opened can find it. A @timestamp: a store that stamps
         # entries with the record time — Cloud Logging — would otherwise file
         # this line at the moment it was SHIPPED, hours late after a backlog
@@ -254,7 +254,7 @@ def add_file_sink(target_logger, level: str):
             rotation=_ROTATION,
             retention=_RETENTION,
             encoding="utf-8",
-            # Synchronous on purpose (PCC-1038): loguru's file sink is
+            # Synchronous on purpose: loguru's file sink is
             # line-buffered ("a", buffering=1), so each record is one write()
             # into the OS page cache — which survives os._exit/SIGKILL, letting
             # the shipper deliver a crashing bot's last words. enqueue=True
