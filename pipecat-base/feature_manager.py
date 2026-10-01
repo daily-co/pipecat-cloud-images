@@ -24,6 +24,7 @@ class FeatureKeys(Enum):
     SMALLWEBRTC_PATCH = "smallwebrtc_patch"
     WHATSAPP = "whatsapp"
     OBSERVABILITY_OBSERVERS = "observability_observers"
+    MOQ_SESSION = "moq_session"
 
 
 @dataclass
@@ -64,6 +65,7 @@ class FeatureManager:
         self._detect_pipecatcloud_features()
         self._detect_smallwebrtc_features()
         self._detect_observer_features()
+        self._detect_moq_session()
 
     def _create_feature_info(
         self,
@@ -102,6 +104,42 @@ class FeatureManager:
         try:
             from pipecatcloud import SmallWebRTCSessionManager
             from pipecatcloud.agent import SmallWebRTCSessionArguments
+
+            self.features[feature_key] = self._create_feature_info(
+                feature_key, feature_name, version_required
+            )
+        except ImportError as e:
+            self.features[feature_key] = self._create_feature_info(
+                feature_key,
+                feature_name,
+                version_required,
+                status=FeatureStatus.DISABLED,
+                error_message=str(e),
+            )
+
+    def _detect_moq_session(self):
+        """Detect the MoQ session arguments feature.
+
+        app.py passes why they cannot be built, from pcc_pipecat_compat, which
+        names what is missing; the import here only keeps a FeatureManager
+        built without that from reporting a type that is not there.
+        """
+        feature_key = FeatureKeys.MOQ_SESSION
+        feature_name = "MoQ Session Arguments"
+        version_required = "pipecat-ai>=1.12.0, pipecatcloud>=1.3.0"
+
+        if feature_key in self._unavailable:
+            self.features[feature_key] = self._create_feature_info(
+                feature_key,
+                feature_name,
+                version_required,
+                status=FeatureStatus.DISABLED,
+                error_message=self._unavailable[feature_key],
+            )
+            return
+
+        try:
+            from pipecatcloud.agent import MOQSessionArguments  # noqa: F401
 
             self.features[feature_key] = self._create_feature_info(
                 feature_key, feature_name, version_required

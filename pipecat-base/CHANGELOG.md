@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-01
+
+### Added
+
+- Media over QUIC (MoQ) sessions. Pipecat Cloud does not start MoQ sessions
+  yet; this release gets agent images ready for them. A MoQ session hands
+  your `bot()` pipecatcloud's `MOQSessionArguments`, which pipecat-ai's
+  `create_transport` turns into a MoQ transport dialling the session's relay.
+  It needs pipecat-ai 1.12.0 or newer with its `moq` extra, and pipecatcloud
+  1.3.0 or newer, which the image now ships; an agent image that installs its
+  own pipecatcloud needs 1.3.0 or newer too. The session's relay URL carries
+  its token, so keep it out of your own log lines.
+- The capability document reports `transport.moq`: available when your agent
+  image has all of the above, and otherwise unavailable with the reason, such
+  as `No module named 'moq'` when the `moq` extra is missing. If your agent
+  image installs the extra and MoQ is still unavailable, the image says why in
+  a warning at startup.
+- A MoQ session that reaches an image which cannot serve it is refused with a
+  400 before `bot()` runs, with the same reason, and the image serves every
+  other kind of session as before.
+
+### Changed
+
+- The image ships pipecatcloud 1.3.0, up from 1.2.0.
+
 ## [0.2.1] - 2026-09-30
 
 ### Added

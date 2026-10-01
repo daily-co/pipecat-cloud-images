@@ -40,6 +40,8 @@ def _modules(
     post_init_error: Optional[Exception] = None,
     smallwebrtc_error: Optional[Exception] = None,
     validates: bool = False,
+    moq: str = "none",
+    moq_error: Optional[Exception] = None,
 ):
     """with_body: runner arguments declare ``body`` (pipecat-ai 0.0.91+).
     related: session types are built on the runner types (pipecatcloud 0.2.1+);
@@ -49,6 +51,11 @@ def _modules(
     smallwebrtc_error: raised when a SmallWebRTC session type is built.
     validates: runner arguments reject a missing session id or connection in
         ``__post_init__``, as pipecat-ai does for some already.
+    moq: what MoQ the two have. "none": no MOQRunnerArguments (pipecat-ai before
+        1.6); "no_relay_url": one without relay_url (1.6 to 1.11);
+        "pipecat_only": one with relay_url, and a pipecatcloud without
+        MOQSessionArguments (before 1.3.0); "full": both.
+    moq_error: raised when a MoQ session type is built.
     """
 
     def require(args, *names):
@@ -90,16 +97,29 @@ def _modules(
                 raise smallwebrtc_error
             require(self, "session_id", "webrtc_connection")
 
-    runner = type(
-        "runner_types",
-        (),
-        {
-            "RunnerArguments": RunnerArguments,
-            "DailyRunnerArguments": DailyRunnerArguments,
-            "WebSocketRunnerArguments": WebSocketRunnerArguments,
-            "SmallWebRTCRunnerArguments": SmallWebRTCRunnerArguments,
-        },
-    )
+    @dataclasses.dataclass
+    class MOQRunnerArguments(RunnerArguments):
+        host: Optional[str] = None
+        namespace: str = "pipecat"
+        participant_id: str = "response"
+        peer_id: str = "request"
+        if moq != "no_relay_url":
+            relay_url: Optional[str] = dataclasses.field(default=None, kw_only=True)
+
+        def __post_init__(self):
+            if moq_error is not None:
+                raise moq_error
+            require(self, "session_id", "relay_url")
+
+    runner_types = {
+        "RunnerArguments": RunnerArguments,
+        "DailyRunnerArguments": DailyRunnerArguments,
+        "WebSocketRunnerArguments": WebSocketRunnerArguments,
+        "SmallWebRTCRunnerArguments": SmallWebRTCRunnerArguments,
+    }
+    if moq != "none":
+        runner_types["MOQRunnerArguments"] = MOQRunnerArguments
+    runner = type("runner_types", (), runner_types)
 
     @dataclasses.dataclass
     class SessionArguments:
@@ -128,6 +148,8 @@ def _modules(
         types["SmallWebRTCSessionArguments"] = session_type(
             SmallWebRTCRunnerArguments, "webrtc_connection"
         )
+    if moq == "full":
+        types["MOQSessionArguments"] = session_type(MOQRunnerArguments)
     return runner, type("agent", (), types)
 
 
@@ -156,8 +178,19 @@ def _check_pipecat(import_module, *, pipecat="0.0.95", installed=True):
     )
 
 
-def _check_session_types(import_module, *, pipecat="0.0.95", pipecatcloud="1.2.0"):
-    return pcc_pipecat_compat._check_session_types(import_module, _versions(pipecat, pipecatcloud))
+def _check_session_types(import_module, *, pipecat="0.0.95", pipecatcloud="1.2.0", moq_extra=False):
+    def find_spec(name):
+        assert name == "moq", f"unexpected lookup {name}"
+        return object() if moq_extra else None
+
+    return pcc_pipecat_compat._check_session_types(
+        import_module, _versions(pipecat, pipecatcloud), find_spec
+    )
+
+
+def _quiet(report) -> bool:
+    """Nothing to warn about and no optional type that fails to build."""
+    return report.warnings == [] and report.unbuildable == {}
 
 
 @pytest.fixture(autouse=True)
@@ -351,7 +384,7 @@ class TestCheckPipecat:
 class TestCheckSessionTypes:
     def test_current_types_pass_silently(self, termination_log, capfd):
         runner, agent = _modules(with_body=True)
-        assert _check_session_types(_importer(runner, agent)) == pcc_pipecat_compat.SessionTypes()
+        assert _quiet(_check_session_types(_importer(runner, agent)))
         assert not termination_log.exists()
         assert capfd.readouterr().err == ""
 
@@ -373,7 +406,7 @@ class TestCheckSessionTypes:
         # pipecatcloud before 0.2.5; app.py runs such an image without SmallWebRTC.
         runner, agent = _modules(smallwebrtc=False)
         report = _check_session_types(_importer(runner, agent), pipecatcloud="0.2.4")
-        assert report == pcc_pipecat_compat.SessionTypes()
+        assert _quiet(report)
         assert not termination_log.exists()
 
     def test_types_that_check_their_fields_build_with_the_probe(self, termination_log):
@@ -381,7 +414,7 @@ class TestCheckSessionTypes:
         # check builds with values a presence check accepts, so it fails only
         # where a real session's build would.
         runner, agent = _modules(validates=True)
-        assert _check_session_types(_importer(runner, agent)) == pcc_pipecat_compat.SessionTypes()
+        assert _quiet(_check_session_types(_importer(runner, agent)))
         assert not termination_log.exists()
 
     def test_a_smallwebrtc_type_that_does_not_build_is_served_without(self, termination_log, capfd):
@@ -467,6 +500,122 @@ class TestCheckSessionTypes:
         assert "WARNING: The session arguments check did not run" in capfd.readouterr().err
 
 
+class TestMoq:
+    """Whether a MoQ session's arguments can be built: optional, never a refusal."""
+
+    NEEDS = (
+        "MoQ sessions need pipecat-ai 1.12.0 or newer with its moq extra, "
+        "and pipecatcloud 1.3.0 or newer; this image has"
+    )
+
+    def test_both_new_enough_serves_moq(self, termination_log):
+        runner, agent = _modules(moq="full")
+        report = _check_session_types(_importer(runner, agent), pipecat="1.12.0")
+        assert report.moq_unavailable is None
+        assert _quiet(report)
+        assert not termination_log.exists()
+
+    @pytest.mark.parametrize(
+        "moq, pipecat, pipecatcloud",
+        [
+            ("none", "1.5.0", "1.2.0"),
+            ("no_relay_url", "1.11.0", "1.3.0"),
+            ("pipecat_only", "1.12.0", "1.2.0"),
+        ],
+        ids=["pipecat-ai before 1.6", "pipecat-ai 1.6 to 1.11", "pipecatcloud before 1.3"],
+    )
+    def test_whatever_is_short_the_reason_names_every_requirement_and_what_is_installed(
+        self, termination_log, moq, pipecat, pipecatcloud
+    ):
+        runner, agent = _modules(moq=moq)
+        report = _check_session_types(
+            _importer(runner, agent), pipecat=pipecat, pipecatcloud=pipecatcloud
+        )
+        assert report.moq_unavailable == (
+            f"{self.NEEDS} pipecat-ai {pipecat} and pipecatcloud {pipecatcloud}"
+        )
+        # Optional: the image starts, and says nothing to an author who
+        # never asked for MoQ.
+        assert _quiet(report)
+        assert not termination_log.exists()
+
+    def test_arguments_that_check_their_dial_target_build_with_the_probe(self):
+        # pipecat-ai 1.12.0's MOQRunnerArguments checks its dial target.
+        runner, agent = _modules(moq="full", validates=True)
+        assert _check_session_types(_importer(runner, agent)).moq_unavailable is None
+
+    def test_arguments_that_do_not_build_say_why(self):
+        runner, agent = _modules(moq="full", moq_error=ValueError("no dial target"))
+        report = _check_session_types(_importer(runner, agent), pipecat="1.12.0")
+        assert report.moq_unavailable == (
+            "pipecatcloud 1.2.0 with pipecat-ai 1.12.0 cannot build MOQSessionArguments "
+            "(ValueError: no dial target)"
+        )
+
+    def test_unavailable_with_the_moq_extra_installed_is_warned_about(self, capfd):
+        runner, agent = _modules(moq="no_relay_url")
+        report = _check_session_types(_importer(runner, agent), pipecat="1.11.0", moq_extra=True)
+        [warning] = report.warnings
+        assert warning == (
+            "pipecat-ai's moq extra is installed, but MoQ sessions need pipecat-ai 1.12.0 or "
+            "newer with its moq extra, and pipecatcloud 1.3.0 or newer; this image has "
+            "pipecat-ai 1.11.0 and pipecatcloud 1.2.0: the image reports MoQ sessions unavailable."
+        )
+        # Returned for app.py to log, not written here.
+        assert capfd.readouterr().err == ""
+
+    def test_available_with_the_moq_extra_installed_is_quiet(self):
+        runner, agent = _modules(moq="full")
+        assert _quiet(_check_session_types(_importer(runner, agent), moq_extra=True))
+
+    def test_a_failing_lookup_of_the_extra_costs_nothing_else(self):
+        # A misbehaving import hook: the extra counts as not installed, and
+        # neither the SmallWebRTC finding nor MoQ's own answer changes.
+        error = AttributeError("'super' object has no attribute '__post_init__'")
+        runner, agent = _modules(moq="full", smallwebrtc_error=error)
+
+        def find_spec(name):
+            raise RuntimeError("a broken finder")
+
+        report = pcc_pipecat_compat._check_session_types(
+            _importer(runner, agent), _versions(), find_spec
+        )
+        assert list(report.unbuildable) == ["SmallWebRTCSessionArguments"]
+        assert report.moq_unavailable is None
+
+    def test_a_fault_in_the_moq_check_is_still_warned_about_with_the_extra(self, monkeypatch):
+        def broken(*args):
+            raise KeyError("a bug")
+
+        monkeypatch.setattr(pcc_pipecat_compat, "_moq_unavailable", broken)
+        runner, agent = _modules(moq="full")
+        [warning] = _check_session_types(_importer(runner, agent), moq_extra=True).warnings
+        assert warning == (
+            "pipecat-ai's moq extra is installed, but the MoQ check did not run "
+            "(KeyError: 'a bug'): the image reports MoQ sessions unavailable."
+        )
+
+    def test_a_fault_in_the_moq_check_counts_as_unavailable(self, monkeypatch, termination_log):
+        def broken(*args):
+            raise KeyError("a bug")
+
+        monkeypatch.setattr(pcc_pipecat_compat, "_moq_unavailable", broken)
+        runner, agent = _modules(moq="full")
+        report = _check_session_types(_importer(runner, agent))
+        assert report.moq_unavailable == "the MoQ check did not run (KeyError: 'a bug')"
+        assert not termination_log.exists()
+
+    def test_a_check_that_never_ran_counts_as_unavailable(self):
+        # What check_session_types() returns when the check itself faults.
+        assert pcc_pipecat_compat.SessionTypes().moq_unavailable
+
+    def test_the_reason_is_one_line_without_square_brackets(self):
+        error = ValueError("bad [moq] value\nsecond line")
+        runner, agent = _modules(moq="full", moq_error=error)
+        reason = _check_session_types(_importer(runner, agent)).moq_unavailable
+        assert "\n" not in reason and "[" not in reason and "]" not in reason
+
+
 class TestInstalledPipecat:
     """The checks against whatever pipecat-ai and pipecatcloud this run has installed."""
 
@@ -481,6 +630,15 @@ class TestInstalledPipecat:
             assert report.warnings == []
         else:
             assert len(report.warnings) == 1 and "older than 0.0.91" in report.warnings[0]
+
+    @pytest.mark.skipif(os.environ.get("PCC_EXPECT_MOQ") != "1", reason="set by CI's moq-extra leg")
+    def test_moq_session_arguments_build_where_ci_installs_moq(self):
+        """On the leg with pipecat-ai 1.12+ and its moq extra, against the
+        pipecatcloud the image locks. The arguments build on legs without the
+        extra too, so only this direction is checked here; what the image
+        reports, extra included, is checked both ways in test_moq_session."""
+        report = pcc_pipecat_compat.check_session_types()
+        assert report.moq_unavailable is None, report.moq_unavailable
 
 
 # ------------------------------------------------------------
