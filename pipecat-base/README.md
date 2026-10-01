@@ -64,11 +64,13 @@ When using this base image, your project must:
 1. Install pipecat-ai 0.0.78 or newer. When the agent starts, the image checks
    that pipecat-ai is installed before importing `bot.py`, and that the session
    arguments it passes to `bot()` build right after; it refuses to start,
-   saying why, if either fails. SmallWebRTC's are the exception: if they do not
-   build, the agent starts without SmallWebRTC (and WhatsApp, which needs it),
-   with a warning saying why. Releases older than 0.0.91 are deprecated: they
-   work, with a warning at startup, and a future release of the image will
-   require 0.0.91.
+   saying why, if either fails. Two kinds are the exceptions. If SmallWebRTC's
+   do not build, the agent starts without SmallWebRTC (and WhatsApp, which
+   needs it), with a warning saying why. If those for Media over QUIC (MoQ)
+   sessions cannot be built, the agent starts without MoQ, with a warning only
+   when it installs pipecat-ai's `moq` extra. Releases older than 0.0.91 are
+   deprecated: they work, with a warning at startup, and a future release of
+   the image will require 0.0.91.
 
 2. Include a `bot.py` file with an async `bot()` function that follows this signature:
 

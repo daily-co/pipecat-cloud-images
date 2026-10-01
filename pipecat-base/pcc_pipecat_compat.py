@@ -339,8 +339,8 @@ def _check_session_types(
     # without the moq extra has no use for it.
     if report.moq_unavailable and moq_extra:
         report.warnings.append(
-            f"pipecat-ai's moq extra is installed, but {report.moq_unavailable}: the image "
-            "reports MoQ sessions unavailable."
+            "pipecat-ai's moq extra is installed, but the image reports MoQ sessions "
+            f"unavailable: {report.moq_unavailable}."
         )
 
     if not takes_body(runner_arguments):

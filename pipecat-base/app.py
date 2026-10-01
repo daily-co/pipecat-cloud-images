@@ -36,7 +36,7 @@ import sys
 from contextlib import asynccontextmanager
 from os import environ
 from typing import Annotated, Callable, Dict, List, NoReturn, Optional, Union
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import unquote_plus, urlsplit
 
 import aiohttp
 import bot as bot_module
@@ -475,7 +475,10 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
         try:
             await _run_bot_with_budget(args)
         except Exception as e:
-            logger.error(f"Exception running bot(): {e}")
+            # A MoQ session's bot dials a relay URL that carries its token, and
+            # an error from the bot or its transport may quote it.
+            relay_url = getattr(args, "relay_url", None)
+            logger.error(f"Exception running bot(): {_without_relay_url(str(e), relay_url)}")
         finally:
             logger.info(f"Stopping bot session with metadata: {json.dumps(metadata)}")
             session_manager = GLOBALS.get("session_manager")
@@ -644,28 +647,45 @@ def _moq_session_arguments(
     _refuse_moq_session(session_id, f"its session arguments did not build ({detail})")
 
 
-# A query value this short is no token, and replacing it everywhere would
+# A part of the URL this short is no token, and replacing it everywhere would
 # blank every stray "1" in an error.
 _MIN_SECRET_CHARS = 8
 
 
 def _relay_url_secrets(relay_url: str) -> List[str]:
     """The relay URL, and every part of it that carries the token, longest
-    first: an error may quote the query, or one value, alone. A URL that does
-    not parse is replaced whole."""
-    secrets = [relay_url]
+    first: an error may quote the query, or one value, alone, as written in
+    the URL or decoded. A URL that does not parse is replaced whole."""
+    parts: List[str] = []
     try:
-        parts = urlsplit(relay_url)
-        secrets += [parts.query, parts.fragment]
-        secrets += [
-            value
-            for _, value in parse_qsl(parts.query, keep_blank_values=True)
-            if len(value) >= _MIN_SECRET_CHARS
-        ]
+        url = urlsplit(relay_url)
+        parts += [url.query, url.fragment]
+        for pair in url.query.split("&"):
+            value = pair.partition("=")[2]
+            parts += [value, unquote_plus(value)]
     except ValueError:
         pass
+    secrets = {relay_url, *(part for part in parts if len(part) >= _MIN_SECRET_CHARS)}
     # Longest first, so a part never leaves a piece of the whole behind.
-    return sorted(filter(None, secrets), key=len, reverse=True)
+    return sorted(secrets, key=len, reverse=True)
+
+
+def _without_relay_url(text: str, relay_url: Optional[str]) -> str:
+    """``text`` with the relay URL, and every part of it that carries the
+    token, replaced. Unchanged for a session that has no relay URL.
+
+    Never raises: it runs in except blocks, where an error of its own would
+    carry the unscrubbed one along. A relay URL it cannot read, which only a
+    bot that replaced its own could hand it, withholds the text instead.
+    """
+    if not relay_url:
+        return text
+    try:
+        for secret in _relay_url_secrets(relay_url):
+            text = text.replace(secret, "<relay URL>")
+        return text
+    except Exception:
+        return "<withheld: it could not be checked for the relay URL>"
 
 
 # ------------------------------------------------------------

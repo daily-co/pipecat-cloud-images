@@ -24,7 +24,7 @@ import sys
 import types
 from functools import wraps
 from typing import Any, Optional
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import pytest
 from fastapi import HTTPException
@@ -357,3 +357,67 @@ class TestMoqBotRequest:
         assert isinstance(args, MOQRunnerArguments)
         assert args.relay_url == RELAY_URL
         assert TOKEN not in repr(args)
+
+
+class TestRelayUrlSecrets:
+    def test_a_short_query_is_not_scrubbed_from_everywhere(self):
+        text = "ValueError: unsupported moq version v=1.0"
+        assert app._without_relay_url(text, "https://relay.example.test:4443/?v=1") == text
+
+    def test_a_percent_encoded_token_is_scrubbed_as_written_and_decoded(self):
+        token = "tok+en/with=chars"
+        relay_url = f"https://relay.example.test:4443/?jwt={quote(token, safe='')}"
+        for quoted in (token, quote(token, safe="")):
+            scrubbed = app._without_relay_url(f"bad token {quoted}", relay_url)
+            assert token not in scrubbed and quoted not in scrubbed
+
+    def test_a_session_without_a_relay_url_is_logged_unchanged(self):
+        assert app._without_relay_url("boom 12345678", None) == "boom 12345678"
+
+    def test_a_relay_url_it_cannot_read_withholds_the_text_without_raising(self):
+        relay_url = f"https://relay.example.test/?jwt={TOKEN}".encode()
+        assert app._without_relay_url(f"bad {TOKEN}", relay_url) == (
+            "<withheld: it could not be checked for the relay URL>"
+        )
+
+
+class TestRunBotLogs:
+    """run_bot logs what bot() raised; a MoQ bot's error may quote its relay URL."""
+
+    @sync
+    async def test_a_bot_error_quoting_the_relay_url_is_logged_without_it(self, monkeypatch, logs):
+        async def failing_bot(args):
+            raise ConnectionError(f"cannot reach {args.relay_url}")
+
+        monkeypatch.setattr(app, "bot", failing_bot)
+        args = _moq_type()(session_id="sess-moq", relay_url=RELAY_URL, namespace=NAMESPACE)
+        await app.run_bot(args, "moq")
+        assert any("Exception running bot(): cannot reach <relay URL>" in line for line in logs)
+        _nothing_carries_the_token(logs)
+
+    @sync
+    async def test_a_bot_that_replaced_its_relay_url_cannot_make_run_bot_raise(
+        self, monkeypatch, logs
+    ):
+        async def failing_bot(args):
+            args.relay_url = args.relay_url.encode()
+            raise ConnectionError(f"cannot reach {args.relay_url.decode()}")
+
+        monkeypatch.setattr(app, "bot", failing_bot)
+        args = _moq_type()(session_id="sess-moq", relay_url=RELAY_URL, namespace=NAMESPACE)
+        await app.run_bot(args, "moq")
+        assert any(
+            "Exception running bot(): <withheld: it could not be checked for the relay URL>" in line
+            for line in logs
+        )
+        _nothing_carries_the_token(logs)
+
+    @sync
+    async def test_another_sessions_error_is_logged_as_it_was(self, monkeypatch, logs):
+        async def failing_bot(args):
+            raise RuntimeError("boom 12345678")
+
+        monkeypatch.setattr(app, "bot", failing_bot)
+        args = app.pcc_pipecat_compat.build(app.PipecatSessionArguments, session_id="s", body={})
+        await app.run_bot(args, None)
+        assert any("Exception running bot(): boom 12345678" in line for line in logs)

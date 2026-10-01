@@ -557,9 +557,9 @@ class TestMoq:
         report = _check_session_types(_importer(runner, agent), pipecat="1.11.0", moq_extra=True)
         [warning] = report.warnings
         assert warning == (
-            "pipecat-ai's moq extra is installed, but MoQ sessions need pipecat-ai 1.12.0 or "
-            "newer with its moq extra, and pipecatcloud 1.3.0 or newer; this image has "
-            "pipecat-ai 1.11.0 and pipecatcloud 1.2.0: the image reports MoQ sessions unavailable."
+            "pipecat-ai's moq extra is installed, but the image reports MoQ sessions "
+            "unavailable: MoQ sessions need pipecat-ai 1.12.0 or newer with its moq extra, and "
+            "pipecatcloud 1.3.0 or newer; this image has pipecat-ai 1.11.0 and pipecatcloud 1.2.0."
         )
         # Returned for app.py to log, not written here.
         assert capfd.readouterr().err == ""
@@ -591,8 +591,8 @@ class TestMoq:
         runner, agent = _modules(moq="full")
         [warning] = _check_session_types(_importer(runner, agent), moq_extra=True).warnings
         assert warning == (
-            "pipecat-ai's moq extra is installed, but the MoQ check did not run "
-            "(KeyError: 'a bug'): the image reports MoQ sessions unavailable."
+            "pipecat-ai's moq extra is installed, but the image reports MoQ sessions "
+            "unavailable: the MoQ check did not run (KeyError: 'a bug')."
         )
 
     def test_a_fault_in_the_moq_check_counts_as_unavailable(self, monkeypatch, termination_log):
