@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-01
+
+### Changed
+
+- Bumped minimum `nltk` from `>=3.10.0` to `>=3.10.3` and `pip` from `>=26.1`
+  to `>=26.2`, and declared `aiohttp>=3.14.3,<4`, which the image imports
+  directly and previously took from `pipecatcloud`.
+
+### Security
+
+- Update dependencies to resolve security vulnerabilities: nltk 3.10.0 to
+  3.10.3, anyio 4.12.1 to 4.14.2, aiohttp 3.14.1 to 3.14.3, urllib3 2.7.0 to
+  2.8.0, pip 26.1.2 to 26.2.1. These cover the image's own environment; an
+  agent image that pins older versions of these packages keeps them.
+
 ## [0.2.2] - 2026-10-01
 
 ### Added

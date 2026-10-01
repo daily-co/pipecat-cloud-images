@@ -1,6 +1,6 @@
 [project]
 name = "pipecat-base"
-version = "0.2.2"
+version = "0.2.3"
 description = "Pipecat Cloud Base Image"
 requires-python = ">=3.11"
 dependencies = [
@@ -10,15 +10,18 @@ dependencies = [
     # build on 0.0.78 and newer, which this image supports; the floor legs in
     # .github/workflows/test.yml keep that true when either is upgraded.
     "pipecatcloud>=1.3.0",
-    "pip>=26.1",
-    "nltk>=3.10.0,<4",
+    # app.py imports aiohttp itself, so its security floor is held here rather
+    # than left to whichever version pipecatcloud happens to bring.
+    "aiohttp>=3.14.3,<4",
+    "pip>=26.2",
+    "nltk>=3.10.3,<4",
 ]
 
 [dependency-groups]
 # Not in the image: the Dockerfile syncs with --no-dev. CI and the pre-commit
 # hooks take each group on its own; dev gives a local `uv run` both. ruff's
 # settings are in the repo root's ruff.toml.
-test = ["pytest~=8.4"]
+test = ["pytest>=9.0.3,<10"]
 lint = ["ruff==0.12.12"]
 dev = [{ include-group = "test" }, { include-group = "lint" }]
 
