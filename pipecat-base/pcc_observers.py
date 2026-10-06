@@ -19,12 +19,21 @@ async def setup_pipeline_worker(worker):
     await _setup_user_bot_latency_observer(worker)
 
 
-# Backwards compatibility: Pipecat < 1.4.0 looks for ``setup_pipeline_task``.
-# 1.4.0+ prefers ``setup_pipeline_worker`` (and checks it first), falling back
+# Backwards compatibility: Pipecat < 1.3.0 looks for ``setup_pipeline_task``.
+# 1.3.0+ prefers ``setup_pipeline_worker`` (and checks it first), falling back
 # to the old name only with a DeprecationWarning, so defining both keeps us
 # warning-free across versions. Drop this alias once the minimum supported
-# Pipecat is >= 1.4.0.
+# Pipecat is >= 1.3.0.
 setup_pipeline_task = setup_pipeline_worker
+
+
+async def setup_worker_runner(runner):
+    """Called by WorkerRunner._load_setup_files() for each runner instance.
+
+    Every observer here is attached per worker, so the runner has nothing to
+    do. Pipecat 1.3.0+ offers each PIPECAT_SETUP_FILES entry to the runner as
+    well, and logs a warning for a file without this hook, once per session.
+    """
 
 
 async def _setup_startup_timing_observer(worker):

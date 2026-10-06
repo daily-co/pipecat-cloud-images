@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A session no longer logs
+  `setup file /app/pcc_observers.py has no setup_worker_runner function` at
+  startup on Pipecat 1.3.0 and later.
+
 ## [0.2.4] - 2026-10-06
 
 ### Changed
