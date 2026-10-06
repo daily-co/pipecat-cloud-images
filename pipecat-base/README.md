@@ -102,6 +102,16 @@ When using this base image, your project must:
 2. When Pipecat Cloud receives a request to start your agent, it calls the appropriate endpoint
 3. The base image invokes your `bot()` function, passing room details and config
 4. Your agent code runs in its own process, managed by the platform
+5. When `bot()` returns, the image runs a garbage collection and glibc's
+   `malloc_trim(0)`, so the next session on the same pod starts from the
+   memory the image needs rather than what earlier sessions left behind. Set
+   `PCC_RELEASE_SESSION_MEMORY=false` to turn this off.
+
+When `bot()` returns, the platform treats the pod as free and may give it a new
+session or stop it. Finish post-session work, such as uploading a recording,
+before `bot()` returns: `await` it in your event handler, or keep the task and
+await it at the end of `bot()`. Work handed to a background task or thread that
+`bot()` doesn't wait for can be cut off when the pod stops.
 
 ## Releasing New Versions
 

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-06
+
+### Changed
+
+- After each session the image hands the session's memory back to the OS: once
+  `bot()` has returned and the event loop has finished with its teardown, it
+  runs a full garbage collection and then glibc's `malloc_trim(0)`, before the
+  pod is freed for its next session. A warm pod's memory no longer climbs from
+  one session to the next: on a cascade bot in a 1 GB, 0.5 CPU container it
+  stayed between 226 and 282 MB over six sessions instead of rising from 154 to
+  377 MB. The release holds the pod for 30-90 ms, and is skipped while another
+  session is running in the process. Set `PCC_RELEASE_SESSION_MEMORY=false` to
+  turn it off.
+
 ## [0.2.3] - 2026-10-01
 
 ### Changed

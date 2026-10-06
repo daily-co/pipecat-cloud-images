@@ -49,6 +49,7 @@ from bot import bot
 _session_types = pcc_pipecat_compat.check_session_types()
 
 import pcc_capabilities
+import pcc_memory
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request, WebSocket
 from fastapi.responses import JSONResponse
 from fastapi.websockets import WebSocketState
@@ -486,6 +487,31 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
                 session_manager.complete_session()
                 GLOBALS["pipecat_session_body"] = None
                 GLOBALS[_FLOW_CONFIG_KEY] = None
+            await _release_session_memory()
+
+
+# When bot() returns, tasks cancelled by the session's teardown still reference
+# the session until the event loop runs their callbacks. Yielding a few turns
+# (one is usually enough) lets the collection free it.
+_RELEASE_LOOP_TURNS = 3
+
+
+async def _release_session_memory() -> None:
+    """Return the finished session's memory to the OS before the pod is freed.
+
+    Awaited inside run_bot() so that it runs before the pod can start its next
+    session, during which it would be skipped. It holds the pod for the release
+    itself, 30-90 ms.
+    """
+    if not pcc_memory.ENABLED:
+        return
+    for _ in range(_RELEASE_LOOP_TURNS):
+        await asyncio.sleep(0)
+    # A session running in this process would stall for the collection's pause.
+    if _active_sessions:
+        logger.debug("Another session is running; not releasing session memory.")
+        return
+    pcc_memory.release_session_memory()
 
 
 # ------------------------------------------------------------
