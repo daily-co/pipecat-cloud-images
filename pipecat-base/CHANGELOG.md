@@ -36,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deployment the platform marks `PCC_EXCLUDE_CONTENT` gets every other record
   without it.
 
+- Each session publishes a `session_info` record naming the runtime it ran on:
+  the pipecat-ai and Python versions, the base image version, and the machine
+  architecture. It is published by the image rather than the observers, so a
+  session on a Pipecat too old for the observers still reports it, and it is
+  sent in the background, so an unreachable publisher never holds up the bot.
+  The `Starting bot session` and `Stopping bot session` log lines carry the
+  same fields.
+
 ### Removed
 
 - The `[pcc-observability]` log lines reporting startup timing and turn
