@@ -31,6 +31,7 @@ import inspect
 import json
 import logging
 import os
+import platform
 import stat
 import sys
 from contextlib import asynccontextmanager
@@ -49,6 +50,7 @@ from bot import bot
 _session_types = pcc_pipecat_compat.check_session_types()
 
 import pcc_capabilities
+import pcc_events
 import pcc_memory
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request, WebSocket
 from fastapi.responses import JSONResponse
@@ -191,6 +193,31 @@ class HealthCheckFilter(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())
 
 image_version = environ.get("IMAGE_VERSION", "unknown")
+
+# What each session reports about the runtime it ran on, so the versions in use
+# can be counted over time, and a feature only old versions need dropped once
+# nothing runs them. None of it changes while the process lives.
+_RUNTIME_INFO = {
+    "pipecat_version": pcc_pipecat_compat._installed_version("pipecat-ai") or "unknown",
+    "python_version": platform.python_version(),
+    "image_version": image_version,
+    "arch": platform.machine(),
+}
+
+# Publishes in flight, held so a task is not collected before it has sent.
+_publishing: set = set()
+
+
+def _publish_session_info() -> None:
+    """Publish the runtime this session runs on, without holding up its bot.
+
+    Sent in the background: an unreachable publisher waits out its timeout on
+    every record, and the bot should not wait with it.
+    """
+    task = asyncio.create_task(pcc_events.publish_event("session_info", _RUNTIME_INFO))
+    _publishing.add(task)
+    task.add_done_callback(_publishing.discard)
+
 
 # Header carrying the session budget Pipecat Cloud has configured for this
 # service (`maxSessionDuration`). Enforcing it here is the only way the cap can
@@ -428,10 +455,7 @@ if feature_manager.is_enabled(FeatureKeys.SMALL_WEBRTC_SESSION):
 
 
 async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
-    metadata = {
-        "session_id": args.session_id,
-        "image_version": image_version,
-    }
+    metadata = {"session_id": args.session_id, **_RUNTIME_INFO}
     with (
         logger.contextualize(session_id=args.session_id),
         # Attribute captured print()/stdout output to this session too.
@@ -472,6 +496,11 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
                     args.body = GLOBALS.get("pipecat_session_body")
                 if getattr(args, "flow_config", None) is None:
                     _attach_flow_config(args, GLOBALS.get(_FLOW_CONFIG_KEY))
+
+        # Here rather than on arrival, so a session is reported once: the
+        # SmallWebRTC request that only waits for the connection has returned
+        # above, and the bot runs from the offer's own call.
+        _publish_session_info()
 
         try:
             await _run_bot_with_budget(args)
