@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-10-06
+
+### Added
+
+- Session observability is published to the Pipecat Cloud event pipeline when
+  `PIPECAT_EVENT_PUBLISHER_ENDPOINT` is set, and dropped when it is not. A
+  session reports its startup and transport timing, the latency of each turn
+  and the parts that latency was spent on, what each service spent and
+  consumed (including LLM token counts), who was speaking and when, the
+  function calls the bot made, and the errors it hit. One event carries one
+  record, named for the record it carries.
+
+- Each observer is imported on its own and skipped when the import fails, so a
+  bot reports whatever its Pipecat version provides rather than failing to
+  start. Service metrics, speaking, function calls and errors need Pipecat
+  1.9.0; startup timing and latency are reported as before.
+
+  Function call arguments and results are not published: what a bot's tools
+  were asked and answered belongs to the bot, not to the platform running it.
+
+- A session's transcript is published too, as a `transcript` record for each
+  turn: the role, the text the turn ended up with, when the turn started, and
+  whether an assistant turn was interrupted. The text comes from the context
+  aggregators, so it is the turn as the LLM received it rather than a stream
+  of partial transcriptions, and a turn that produced no words is not
+  published. This is the one record that carries the conversation itself, so a
+  deployment the platform marks `PCC_EXCLUDE_CONTENT` gets every other record
+  without it.
+
+- Each session publishes a `session_info` record naming the runtime it ran on:
+  the pipecat-ai and Python versions, the base image version, and the machine
+  architecture. It is published by the image rather than the observers, so a
+  session on a Pipecat too old for the observers still reports it, and it is
+  sent in the background, so an unreachable publisher never holds up the bot.
+  The `Starting bot session` and `Stopping bot session` log lines carry the
+  same fields.
+
+### Removed
+
+- The `[pcc-observability]` log lines reporting startup timing and turn
+  latency. What they reported is published as events instead, and a session's
+  timeline in the dashboard is built from Pipecat's own log output rather than
+  from these.
+
 ### Fixed
 
 - A session no longer logs
