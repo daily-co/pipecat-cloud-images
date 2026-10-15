@@ -391,6 +391,19 @@ def test_an_errors_message_travels_where_the_transcript_does(monkeypatch, posted
     assert properties["processor"] == "DailyOutputTransport#0"
 
 
+def test_a_long_message_is_cut_rather_than_costing_the_record(monkeypatch, posted):
+    """A provider's error can quote its whole request; the publisher's 10 KB
+    cap on a record would then lose the error entirely."""
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
+    long = _AN_ERROR.model_copy(update={"message": "x" * 20_000})
+
+    asyncio.run(pcc_observers._publish_record("error", long))
+
+    message = posted[0][1]["event_properties"]["message"]
+    assert message == "x" * pcc_observers._MAX_CONTENT_CHARS + "…"
+    assert len(json.dumps(posted[0][1]["event_properties"])) < MAX_EVENT_PROPERTIES_LENGTH
+
+
 def test_content_fields_are_only_ever_added_to_a_record_that_publishes():
     """A content field belongs to a record the list already names."""
     assert set(pcc_observers._CONTENT_FIELDS) <= set(pcc_observers._PUBLISHED_FIELDS)

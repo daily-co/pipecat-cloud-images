@@ -129,6 +129,10 @@ _CONTENT_FIELDS: dict[str, dict] = {
     "error": {"message": True},
 }
 
+# The publisher refuses a record whose properties pass 10 KB, losing the whole
+# record, and a provider's error can quote the request that failed in full.
+_MAX_CONTENT_CHARS = 2000
+
 
 def _published_fields(event_name: str) -> dict:
     """The fields a record of this name publishes for this deployment."""
@@ -151,6 +155,10 @@ async def _publish_record(event_name: str, record):
     except Exception as e:
         logger.warning(f"[pcc-observability] Could not serialize {event_name}: {e}")
         return
+    for field in _CONTENT_FIELDS.get(event_name, {}):
+        text = properties.get(field)
+        if isinstance(text, str) and len(text) > _MAX_CONTENT_CHARS:
+            properties[field] = text[:_MAX_CONTENT_CHARS] + "…"
     await pcc_events.publish_event(event_name, properties)
 
 
