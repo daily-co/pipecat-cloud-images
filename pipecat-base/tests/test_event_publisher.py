@@ -347,6 +347,68 @@ def test_the_fields_that_can_quote_a_conversation_are_not_published():
     assert "message" not in published["error"]
 
 
+class _ErrorEvent(BaseModel):
+    """The shape of Pipecat's ErrorEvent."""
+
+    message: str
+    category: str
+    exception_type: str | None = None
+    processor: str
+    processor_usable: bool
+    timestamp: float
+
+
+_AN_ERROR = _ErrorEvent(
+    message="Unable to send message: not joined",
+    category="unknown",
+    processor="DailyOutputTransport#0",
+    processor_usable=True,
+    timestamp=1791890285.169,
+)
+
+
+def test_a_deployment_excluding_content_publishes_an_error_without_its_message(monkeypatch, posted):
+    """The message is the one error field that can quote what was said."""
+    monkeypatch.setattr(pcc_observers, "_exclude_content", True)
+
+    asyncio.run(pcc_observers._publish_record("error", _AN_ERROR))
+
+    assert posted[0][1]["event_properties"] == {
+        "category": "unknown",
+        "processor": "DailyOutputTransport#0",
+        "processor_usable": True,
+        "timestamp": 1791890285.169,
+    }
+
+
+def test_an_errors_message_travels_where_the_transcript_does(monkeypatch, posted):
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
+
+    asyncio.run(pcc_observers._publish_record("error", _AN_ERROR))
+
+    properties = posted[0][1]["event_properties"]
+    assert properties["message"] == "Unable to send message: not joined"
+    assert properties["processor"] == "DailyOutputTransport#0"
+
+
+def test_a_long_message_is_cut_rather_than_costing_the_record(monkeypatch, posted):
+    """A provider's error can quote its whole request; the publisher's 10 KB
+    cap on a record would then lose the error entirely."""
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
+    long = _AN_ERROR.model_copy(update={"message": "x" * 20_000})
+
+    asyncio.run(pcc_observers._publish_record("error", long))
+
+    message = posted[0][1]["event_properties"]["message"]
+    assert message == "x" * pcc_observers._MAX_CONTENT_CHARS + "…"
+    assert len(json.dumps(posted[0][1]["event_properties"])) < MAX_EVENT_PROPERTIES_LENGTH
+
+
+def test_content_fields_are_only_ever_added_to_a_record_that_publishes():
+    """A content field belongs to a record the list already names."""
+    assert set(pcc_observers._CONTENT_FIELDS) <= set(pcc_observers._PUBLISHED_FIELDS)
+
+
 def test_every_record_published_names_its_fields():
     """A record with no field list publishes nothing, silently."""
     import re

@@ -38,8 +38,9 @@ if _exclude_content:
 #
 # Free text stays behind — a tool's arguments and result, the exception its
 # handler raised, a processor's error message — since any of it can quote what
-# was said; `push_error_frame` still logs the message for the bot's own
-# session.
+# was said. `_CONTENT_FIELDS` below names the free text that travels where the
+# transcript does; `push_error_frame` still logs an error's message for the
+# bot's own session either way.
 _PUBLISHED_FIELDS: dict[str, dict] = {
     "startup_timing": {
         "start_time": True,
@@ -121,20 +122,43 @@ _PUBLISHED_FIELDS: dict[str, dict] = {
     },
 }
 
+# Free text that can quote the conversation, published only where the
+# transcript is. An error's message is what the failing processor said went
+# wrong, and a provider's error can echo the text it was asked to handle.
+_CONTENT_FIELDS: dict[str, dict] = {
+    "error": {"message": True},
+}
+
+# The publisher refuses a record whose properties pass 10 KB, losing the whole
+# record, and a provider's error can quote the request that failed in full.
+_MAX_CONTENT_CHARS = 2000
+
+
+def _published_fields(event_name: str) -> dict:
+    """The fields a record of this name publishes for this deployment."""
+    fields = _PUBLISHED_FIELDS[event_name]
+    if _exclude_content:
+        return fields
+    return {**fields, **_CONTENT_FIELDS.get(event_name, {})}
+
 
 async def _publish_record(event_name: str, record):
-    """Publish the fields `_PUBLISHED_FIELDS` names for this record.
+    """Publish the fields `_published_fields` names for this record.
 
     A record that will not serialize is dropped rather than raised into the
     handler that reported it.
     """
     try:
         properties = record.model_dump(
-            mode="json", exclude_none=True, include=_PUBLISHED_FIELDS[event_name]
+            mode="json", exclude_none=True, include=_published_fields(event_name)
         )
     except Exception as e:
         logger.warning(f"[pcc-observability] Could not serialize {event_name}: {e}")
         return
+    for field in _CONTENT_FIELDS.get(event_name, {}):
+        text = properties.get(field)
+        if isinstance(text, str) and len(text) > _MAX_CONTENT_CHARS:
+            properties[field] = text[:_MAX_CONTENT_CHARS] + "…"
     await pcc_events.publish_event(event_name, properties)
 
 

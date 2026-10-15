@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-10-15
+
+### Changed
+
+- An `error` record carries the failing processor's message, where the
+  transcript is published. The message is what the processor said went wrong,
+  so it can quote the conversation the way a transcript does, and travels
+  under the same `PCC_EXCLUDE_CONTENT` switch. A deployment excluding content
+  still gets the error's category, exception type and processor. A message
+  longer than 2,000 characters is cut there, so a provider error that quotes
+  its whole request cannot push the record past the publisher's size limit.
+
 ## [0.2.5] - 2026-10-06
 
 ### Added
