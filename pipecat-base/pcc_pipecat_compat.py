@@ -199,7 +199,7 @@ def check_pipecat() -> None:
     which the check exists to spare.
     """
     try:
-        _check_pipecat(importlib.util.find_spec, importlib.import_module, _installed_version)
+        _check_pipecat(importlib.util.find_spec, importlib.import_module, installed_version)
     except Exception as e:
         _warn(f"The pipecat-ai check did not run ({_describe(e)}).")
 
@@ -229,7 +229,7 @@ def check_session_types() -> SessionTypes:
     """
     try:
         return _check_session_types(
-            importlib.import_module, _installed_version, importlib.util.find_spec
+            importlib.import_module, installed_version, importlib.util.find_spec
         )
     except Exception as e:
         _warn(f"The session arguments check did not run ({_describe(e)}).")
@@ -395,11 +395,13 @@ def _found(find_spec: Callable[[str], Any], module: str) -> bool:
         return False
 
 
-def _installed_version(distribution: str) -> Optional[str]:
+def installed_version(distribution: str) -> Optional[str]:
+    """The installed version of ``distribution``, or None when its metadata
+    does not give one: absent (a copy on the path without dist-info),
+    incomplete, or broken."""
     try:
-        # None when a distribution's metadata is incomplete.
         return importlib.metadata.version(distribution)
-    except importlib.metadata.PackageNotFoundError:
+    except Exception:
         return None
 
 

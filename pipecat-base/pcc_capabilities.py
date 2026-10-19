@@ -13,8 +13,9 @@ can refuse it before it starts. ``available: true`` means only that it is not
 ruled out: the image cannot see which sessions the bot's own ``bot()`` handles.
 
 The other entries are facts about the agent image, for the platform's own
-rules, each named under what it is about: ``package.pipecat-ai`` is available
-when pipecat-ai is installed, with its version as ``value``. The image states
+rules, each named under what it is about: ``package.pipecat-ai`` is always
+available, since the image refuses to start without pipecat-ai, with its
+version as ``value`` when the package metadata gives one. The image states
 them and decides nothing with them; a minimum version a kind of session needs
 on Pipecat Cloud is the platform's to apply.
 
@@ -49,7 +50,6 @@ registered on this path would otherwise be reached first. Only HTTP requests
 are answered there; a websocket on the path still reaches the application.
 """
 
-import importlib.metadata
 import importlib.util
 import json
 import re
@@ -58,7 +58,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from feature_manager import FeatureKeys, FeatureManager, FeatureStatus
 
 # The startup refusal's cleanup: one line, no square brackets.
-from pcc_pipecat_compat import _one_line
+from pcc_pipecat_compat import _one_line, installed_version
 
 PATH = "/pcc/capabilities"
 
@@ -97,9 +97,8 @@ _CAPABILITIES = (
     ("whatsapp", (FeatureKeys.WHATSAPP,), ()),
 )
 
-# The distributions whose installed version the image reports as a fact. Each
-# entry is named "package." followed by the distribution's name, which keeps
-# it apart from the kinds of session.
+# The packages whose version the image reports, as "package.<name>". Each is
+# always reported available, so list only packages the image requires.
 _PACKAGES = ("pipecat-ai",)
 _PACKAGE_PREFIX = "package."
 
@@ -142,19 +141,10 @@ def entries(features: FeatureManager) -> Dict[str, Dict[str, Any]]:
 
 
 def _package(distribution: str) -> Dict[str, Any]:
-    """``distribution`` as a fact: available when installed, with its version
-    as ``value`` when its metadata gives one."""
-    try:
-        version = importlib.metadata.version(distribution)
-    except importlib.metadata.PackageNotFoundError:
-        return {"available": False, "reason": text(f"{distribution} is not installed")}
-    except Exception:
-        # A fault in the metadata costs this fact its version, not the whole
-        # document: the image refuses to start without pipecat-ai, so it is
-        # installed.
-        return {"available": True}
+    """``distribution`` as a fact: available, since the image is running, with
+    its version as ``value`` when its metadata gives one."""
+    version = installed_version(distribution)
     if not version:
-        # Metadata without a version: installed, version unknown.
         return {"available": True}
     return {"available": True, "value": text(version)}
 

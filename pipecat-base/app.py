@@ -198,7 +198,7 @@ image_version = environ.get("IMAGE_VERSION", "unknown")
 # can be counted over time, and a feature only old versions need dropped once
 # nothing runs them. None of it changes while the process lives.
 _RUNTIME_INFO = {
-    "pipecat_version": pcc_pipecat_compat._installed_version("pipecat-ai") or "unknown",
+    "pipecat_version": pcc_pipecat_compat.installed_version("pipecat-ai") or "unknown",
     "python_version": platform.python_version(),
     "image_version": image_version,
     "arch": platform.machine(),
