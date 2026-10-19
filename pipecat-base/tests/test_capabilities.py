@@ -122,33 +122,27 @@ class TestEntries:
         document = {"version": 1, "capabilities": pcc_capabilities.entries(_features())}
         assert pcc_capabilities.problem(document) is None
 
-    def test_a_package_that_is_not_installed_is_unavailable(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "error",
+        [importlib.metadata.PackageNotFoundError("pipecat-ai"), ValueError("a broken dist-info")],
+    )
+    def test_metadata_that_gives_no_version_costs_only_the_version(self, monkeypatch, error):
+        # Running means pipecat-ai imported, so a copy without dist-info, or
+        # with broken dist-info, is still installed.
         def version(distribution):
-            raise importlib.metadata.PackageNotFoundError(distribution)
+            raise error
 
-        monkeypatch.setattr(pcc_capabilities.importlib.metadata, "version", version)
-        assert pcc_capabilities.entries(_features())["package.pipecat-ai"] == {
-            "available": False,
-            "reason": "pipecat-ai is not installed",
-        }
-
-    def test_a_fault_in_the_metadata_costs_only_the_version(self, monkeypatch):
-        def version(distribution):
-            raise ValueError("a broken dist-info")
-
-        monkeypatch.setattr(pcc_capabilities.importlib.metadata, "version", version)
+        monkeypatch.setattr(importlib.metadata, "version", version)
         found = pcc_capabilities.entries(_features())
         assert found["package.pipecat-ai"] == {"available": True}
         assert all(found[name]["available"] for name in NAMES)
 
     def test_metadata_without_a_version_reports_none(self, monkeypatch):
-        monkeypatch.setattr(pcc_capabilities.importlib.metadata, "version", lambda d: None)
+        monkeypatch.setattr(importlib.metadata, "version", lambda d: None)
         assert pcc_capabilities.entries(_features())["package.pipecat-ai"] == {"available": True}
 
     def test_a_version_is_cleaned_like_any_text(self, monkeypatch):
-        monkeypatch.setattr(
-            pcc_capabilities.importlib.metadata, "version", lambda d: "1.13.0+fork[a]\nb"
-        )
+        monkeypatch.setattr(importlib.metadata, "version", lambda d: "1.13.0+fork[a]\nb")
         entry = pcc_capabilities.entries(_features())["package.pipecat-ai"]
         assert entry["value"] == "1.13.0+fork(a) b"
 
