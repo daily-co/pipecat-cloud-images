@@ -12,11 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `GET /pcc/capabilities` reports the pipecat-ai the agent image installed, as
-  a `pipecat-ai` entry with the version as its `value`. Pipecat Cloud applies
-  its own minimum versions from it: MoQ sessions there need pipecat-ai 1.13.0
-  or newer, whose MoQ transport keeps a call going when a relay is lost or the
-  browser reconnects. An earlier base image reports no version, so MoQ on
-  Pipecat Cloud needs this base image or newer too. The image itself only
+  a `package.pipecat-ai` entry with the version as its `value`. Pipecat Cloud
+  applies its own minimum versions from it: MoQ sessions there need pipecat-ai
+  1.13.0 or newer, whose MoQ transport keeps a call going when a relay is lost
+  or the browser reconnects. An earlier base image reports no version, so MoQ
+  on Pipecat Cloud needs this base image or newer too. The image itself only
   reports the version.
 
 ## [0.2.6] - 2026-10-15

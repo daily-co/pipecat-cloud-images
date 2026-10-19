@@ -13,9 +13,10 @@ can refuse it before it starts. ``available: true`` means only that it is not
 ruled out: the image cannot see which sessions the bot's own ``bot()`` handles.
 
 The other entries are facts about the agent image, for the platform's own
-rules: ``pipecat-ai`` is available when it is installed, with its version as
-``value``. The image states them and decides nothing with them; a minimum
-version a kind of session needs on Pipecat Cloud is the platform's to apply.
+rules, each named under what it is about: ``package.pipecat-ai`` is available
+when pipecat-ai is installed, with its version as ``value``. The image states
+them and decides nothing with them; a minimum version a kind of session needs
+on Pipecat Cloud is the platform's to apply.
 
 The document::
 
@@ -23,7 +24,7 @@ The document::
      "capabilities": {
        "transport.daily": {"available": true},
        "transport.webrtc": {"available": false, "reason": "..."},
-       "pipecat-ai": {"available": true, "value": "1.13.0"}}}
+       "package.pipecat-ai": {"available": true, "value": "1.13.0"}}}
 
 - ``available`` is required; ``reason`` (why not) and ``value`` (for a fact
   that is not yes or no) are optional strings.
@@ -96,9 +97,11 @@ _CAPABILITIES = (
     ("whatsapp", (FeatureKeys.WHATSAPP,), ()),
 )
 
-# The distributions whose installed version the image reports as a fact, each
-# under its own name.
+# The distributions whose installed version the image reports as a fact. Each
+# entry is named "package." followed by the distribution's name, which keeps
+# it apart from the kinds of session.
 _PACKAGES = ("pipecat-ai",)
+_PACKAGE_PREFIX = "package."
 
 Scope = Dict[str, Any]
 Receive = Callable[[], Awaitable[Dict[str, Any]]]
@@ -134,7 +137,7 @@ def entries(features: FeatureManager) -> Dict[str, Dict[str, Any]]:
         else:
             result[name] = {"available": False, "reason": reason}
     for distribution in _PACKAGES:
-        result[distribution] = _package(distribution)
+        result[_PACKAGE_PREFIX + distribution] = _package(distribution)
     return result
 
 

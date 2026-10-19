@@ -43,7 +43,7 @@ import app  # noqa: E402
 
 NAMES = {"transport.daily", "transport.websocket", "transport.webrtc", "transport.moq", "whatsapp"}
 # The facts reported beside the kinds of session.
-FACTS = {"pipecat-ai"}
+FACTS = {"package.pipecat-ai"}
 
 
 def _features(overrides=None, missing=()):
@@ -109,12 +109,15 @@ class TestEntries:
     def test_everything_found_is_available(self):
         assert pcc_capabilities.entries(_features()) == {
             **{name: {"available": True} for name in NAMES},
-            "pipecat-ai": {"available": True, "value": importlib.metadata.version("pipecat-ai")},
+            "package.pipecat-ai": {
+                "available": True,
+                "value": importlib.metadata.version("pipecat-ai"),
+            },
         }
 
     def test_the_installed_pipecat_ai_is_reported_with_its_version(self):
         # A fact for the platform's rules: nothing here depends on the version.
-        entry = pcc_capabilities.entries(_features())["pipecat-ai"]
+        entry = pcc_capabilities.entries(_features())["package.pipecat-ai"]
         assert entry == {"available": True, "value": importlib.metadata.version("pipecat-ai")}
         document = {"version": 1, "capabilities": pcc_capabilities.entries(_features())}
         assert pcc_capabilities.problem(document) is None
@@ -124,7 +127,7 @@ class TestEntries:
             raise importlib.metadata.PackageNotFoundError(distribution)
 
         monkeypatch.setattr(pcc_capabilities.importlib.metadata, "version", version)
-        assert pcc_capabilities.entries(_features())["pipecat-ai"] == {
+        assert pcc_capabilities.entries(_features())["package.pipecat-ai"] == {
             "available": False,
             "reason": "pipecat-ai is not installed",
         }
@@ -135,18 +138,19 @@ class TestEntries:
 
         monkeypatch.setattr(pcc_capabilities.importlib.metadata, "version", version)
         found = pcc_capabilities.entries(_features())
-        assert found["pipecat-ai"] == {"available": True}
+        assert found["package.pipecat-ai"] == {"available": True}
         assert all(found[name]["available"] for name in NAMES)
 
     def test_metadata_without_a_version_reports_none(self, monkeypatch):
         monkeypatch.setattr(pcc_capabilities.importlib.metadata, "version", lambda d: None)
-        assert pcc_capabilities.entries(_features())["pipecat-ai"] == {"available": True}
+        assert pcc_capabilities.entries(_features())["package.pipecat-ai"] == {"available": True}
 
     def test_a_version_is_cleaned_like_any_text(self, monkeypatch):
         monkeypatch.setattr(
             pcc_capabilities.importlib.metadata, "version", lambda d: "1.13.0+fork[a]\nb"
         )
-        assert pcc_capabilities.entries(_features())["pipecat-ai"]["value"] == "1.13.0+fork(a) b"
+        entry = pcc_capabilities.entries(_features())["package.pipecat-ai"]
+        assert entry["value"] == "1.13.0+fork(a) b"
 
     def test_webrtc_needs_the_session_arguments(self):
         features = _features(
