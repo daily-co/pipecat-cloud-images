@@ -11,6 +11,7 @@ its limits, so the properties pinned here are:
   to the shared app never answers it.
 """
 
+import importlib.metadata
 import json
 import os
 import subprocess
@@ -41,6 +42,8 @@ if "bot" not in sys.modules:
 import app  # noqa: E402
 
 NAMES = {"transport.daily", "transport.websocket", "transport.webrtc", "transport.moq", "whatsapp"}
+# The facts reported beside the kinds of session.
+FACTS = {"package.pipecat-ai"}
 
 
 def _features(overrides=None, missing=()):
@@ -105,8 +108,49 @@ class TestEntries:
 
     def test_everything_found_is_available(self):
         assert pcc_capabilities.entries(_features()) == {
-            name: {"available": True} for name in NAMES
+            **{name: {"available": True} for name in NAMES},
+            "package.pipecat-ai": {
+                "available": True,
+                "value": importlib.metadata.version("pipecat-ai"),
+            },
         }
+
+    def test_the_installed_pipecat_ai_is_reported_with_its_version(self):
+        # A fact for the platform's rules: nothing here depends on the version.
+        entry = pcc_capabilities.entries(_features())["package.pipecat-ai"]
+        assert entry == {"available": True, "value": importlib.metadata.version("pipecat-ai")}
+        document = {"version": 1, "capabilities": pcc_capabilities.entries(_features())}
+        assert pcc_capabilities.problem(document) is None
+
+    def test_a_package_that_is_not_installed_is_unavailable(self, monkeypatch):
+        def version(distribution):
+            raise importlib.metadata.PackageNotFoundError(distribution)
+
+        monkeypatch.setattr(pcc_capabilities.importlib.metadata, "version", version)
+        assert pcc_capabilities.entries(_features())["package.pipecat-ai"] == {
+            "available": False,
+            "reason": "pipecat-ai is not installed",
+        }
+
+    def test_a_fault_in_the_metadata_costs_only_the_version(self, monkeypatch):
+        def version(distribution):
+            raise ValueError("a broken dist-info")
+
+        monkeypatch.setattr(pcc_capabilities.importlib.metadata, "version", version)
+        found = pcc_capabilities.entries(_features())
+        assert found["package.pipecat-ai"] == {"available": True}
+        assert all(found[name]["available"] for name in NAMES)
+
+    def test_metadata_without_a_version_reports_none(self, monkeypatch):
+        monkeypatch.setattr(pcc_capabilities.importlib.metadata, "version", lambda d: None)
+        assert pcc_capabilities.entries(_features())["package.pipecat-ai"] == {"available": True}
+
+    def test_a_version_is_cleaned_like_any_text(self, monkeypatch):
+        monkeypatch.setattr(
+            pcc_capabilities.importlib.metadata, "version", lambda d: "1.13.0+fork[a]\nb"
+        )
+        entry = pcc_capabilities.entries(_features())["package.pipecat-ai"]
+        assert entry["value"] == "1.13.0+fork(a) b"
 
     def test_webrtc_needs_the_session_arguments(self):
         features = _features(
@@ -195,7 +239,7 @@ class TestEntries:
 
     def test_what_this_environment_finds_renders(self):
         body = pcc_capabilities.render(pcc_capabilities.entries(FeatureManager()))
-        assert set(json.loads(body)["capabilities"]) == NAMES
+        assert set(json.loads(body)["capabilities"]) == NAMES | FACTS
 
 
 class TestInstalled:
@@ -440,7 +484,7 @@ class TestApp:
         client = TestClient(app.server_config.app)
         response = client.get(pcc_capabilities.PATH)
         assert response.status_code == 200
-        assert set(response.json()["capabilities"]) == NAMES
+        assert set(response.json()["capabilities"]) == NAMES | FACTS
         assert client.get("/livez").status_code == 200
 
     def test_the_document_is_what_the_features_found(self):

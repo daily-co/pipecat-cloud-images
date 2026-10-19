@@ -1,4 +1,4 @@
-"""Which kinds of session this image rules out, reported to the platform.
+"""Which kinds of session this image rules out, and what it runs, reported to the platform.
 
 The platform knows an agent's base image version from its image label, but not
 the pipecat-ai, pipecatcloud or extras the agent image installed on top of it.
@@ -7,17 +7,24 @@ At startup the image works out which session types it can route to the bot
 needs are installed (checked here). This module reports that at
 ``GET /pcc/capabilities``, where the platform reads it once per deployment.
 
-The document can only rule sessions out. ``available: false`` means a session
-of that kind cannot work on this image, so the platform can refuse it before it
-starts. ``available: true`` means only that it is not ruled out: the image
-cannot see which sessions the bot's own ``bot()`` handles.
+The entries for kinds of session can only rule sessions out. ``available:
+false`` means a session of that kind cannot work on this image, so the platform
+can refuse it before it starts. ``available: true`` means only that it is not
+ruled out: the image cannot see which sessions the bot's own ``bot()`` handles.
+
+The other entries are facts about the agent image, for the platform's own
+rules, each named under what it is about: ``package.pipecat-ai`` is available
+when pipecat-ai is installed, with its version as ``value``. The image states
+them and decides nothing with them; a minimum version a kind of session needs
+on Pipecat Cloud is the platform's to apply.
 
 The document::
 
     {"version": 1,
      "capabilities": {
        "transport.daily": {"available": true},
-       "transport.webrtc": {"available": false, "reason": "..."}}}
+       "transport.webrtc": {"available": false, "reason": "..."},
+       "package.pipecat-ai": {"available": true, "value": "1.13.0"}}}
 
 - ``available`` is required; ``reason`` (why not) and ``value`` (for a fact
   that is not yes or no) are optional strings.
@@ -42,6 +49,7 @@ registered on this path would otherwise be reached first. Only HTTP requests
 are answered there; a websocket on the path still reaches the application.
 """
 
+import importlib.metadata
 import importlib.util
 import json
 import re
@@ -89,6 +97,12 @@ _CAPABILITIES = (
     ("whatsapp", (FeatureKeys.WHATSAPP,), ()),
 )
 
+# The distributions whose installed version the image reports as a fact. Each
+# entry is named "package." followed by the distribution's name, which keeps
+# it apart from the kinds of session.
+_PACKAGES = ("pipecat-ai",)
+_PACKAGE_PREFIX = "package."
+
 Scope = Dict[str, Any]
 Receive = Callable[[], Awaitable[Dict[str, Any]]]
 Send = Callable[[Dict[str, Any]], Awaitable[None]]
@@ -114,7 +128,7 @@ def _printable_ascii(c: str) -> bool:
 
 def entries(features: FeatureManager) -> Dict[str, Dict[str, Any]]:
     """The capability entries for what ``features`` found at startup and the
-    modules installed."""
+    modules installed, then the packages' versions."""
     result: Dict[str, Dict[str, Any]] = {}
     for name, keys, modules in _CAPABILITIES:
         reason = _first_unavailable(features, keys) or _first_missing(modules)
@@ -122,7 +136,27 @@ def entries(features: FeatureManager) -> Dict[str, Dict[str, Any]]:
             result[name] = {"available": True}
         else:
             result[name] = {"available": False, "reason": reason}
+    for distribution in _PACKAGES:
+        result[_PACKAGE_PREFIX + distribution] = _package(distribution)
     return result
+
+
+def _package(distribution: str) -> Dict[str, Any]:
+    """``distribution`` as a fact: available when installed, with its version
+    as ``value`` when its metadata gives one."""
+    try:
+        version = importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return {"available": False, "reason": text(f"{distribution} is not installed")}
+    except Exception:
+        # A fault in the metadata costs this fact its version, not the whole
+        # document: the image refuses to start without pipecat-ai, so it is
+        # installed.
+        return {"available": True}
+    if not version:
+        # Metadata without a version: installed, version unknown.
+        return {"available": True}
+    return {"available": True, "value": text(version)}
 
 
 def _first_missing(modules) -> Optional[str]:

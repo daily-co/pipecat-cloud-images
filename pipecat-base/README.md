@@ -95,7 +95,8 @@ When using this base image, your project must:
    - `/bot` endpoint for HTTP-based agents (Daily.co integration)
    - `/ws` endpoint for WebSocket-based agents (Twilio, custom WebSocket)
    - `/pcc/capabilities`, which tells Pipecat Cloud which kinds of session the
-     agent image rules out, so they can be turned away before they start.
+     agent image rules out, so they can be turned away before they start, and
+     which pipecat-ai it installed.
      The path is reserved: the image answers HTTP requests for it before they
      reach your app, so an HTTP route your bot module adds there is never
      called.
