@@ -111,6 +111,144 @@ def test_raise_floors_leaves_transitive_packages_and_the_lock_alone(project):
     assert commands == []
 
 
+def test_raise_floors_keeps_a_single_quoted_requirement_single_quoted(project):
+    tmp, _ = project
+    (tmp / "pyproject.toml").write_text("[project]\ndependencies = ['aiohttp>=3.14.3,<4']\n")
+    assert refresh.raise_floors({"aiohttp": "3.14.4"}) == ["aiohttp>=3.14.4,<4"]
+    assert "['aiohttp>=3.14.4,<4']" in (tmp / "pyproject.toml").read_text()
+
+
+def test_raise_floors_reports_only_a_floor_it_could_raise(project, capsys):
+    tmp, commands = project
+    # An escape: tomllib reads "aiohttp>=3.14.3", which is not in the file as written.
+    written = '[project]\ndependencies = ["aiohttp\\u003e=3.14.3"]\n'
+    (tmp / "pyproject.toml").write_text(written)
+    assert refresh.raise_floors({"aiohttp": "3.14.4"}) == []
+    assert (tmp / "pyproject.toml").read_text() == written
+    assert commands == []
+    assert "::warning::Could not find 'aiohttp>=3.14.3'" in capsys.readouterr().out
+
+
+# probe
+
+PROBED = "3.12.15\n0.13.5\nopenssl 3.5.4-1~deb13u1\nxz-utils 5.8.1-1\n"
+
+
+def test_probe_reads_python_uv_and_each_debian_source_package(monkeypatch):
+    monkeypatch.setattr(refresh, "run", lambda *args, cwd=None: PROBED)
+    assert refresh.probe("image") == {
+        "Python": "3.12.15",
+        "uv": "0.13.5",
+        "Debian openssl": "3.5.4-1~deb13u1",
+        "Debian xz-utils": "5.8.1-1",
+    }
+
+
+@pytest.mark.parametrize(
+    "output",
+    ["", "3.12.15\n0.13.5\n", "0.13.5\nopenssl 3.5.4-1~deb13u1\n", "3.12.15\n0.13.5\nodd\n"],
+    ids=["empty", "no packages", "a line missing", "an odd package line"],
+)
+def test_probe_refuses_output_it_does_not_recognise(monkeypatch, output):
+    monkeypatch.setattr(refresh, "run", lambda *args, cwd=None: output)
+    with pytest.raises(ValueError, match="unexpected output from image"):
+        refresh.probe("image")
+
+
+# refresh_images
+
+OLD = "ghcr.io/astral-sh/uv:python{v}-trixie-slim@sha256:" + "0" * 64
+NEW = "ghcr.io/astral-sh/uv:python{v}-trixie-slim@sha256:" + "1" * 64
+
+
+@pytest.fixture
+def repin(tmp_path, monkeypatch):
+    """Repin a versions.yaml whose 3.12 and 3.13 tags have both moved."""
+    versions = tmp_path / "versions.yaml"
+    versions.write_text(
+        "base:\n  base_images:\n"
+        + "".join(f"    '{v}': {OLD.format(v=v)}\n" for v in ("3.12", "3.13"))
+    )
+    monkeypatch.setattr(refresh, "VERSIONS", versions)
+    monkeypatch.setattr(refresh, "resolve", lambda ref: ref.replace("0" * 64, "1" * 64))
+
+    def setup(probes: dict):
+        def probe(ref):
+            result = probes[ref]
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        monkeypatch.setattr(refresh, "probe", probe)
+        return refresh.refresh_images()
+
+    return setup
+
+
+def versions(python: str, openssl: str) -> dict:
+    return {"Python": python, "uv": "0.13.5", "Debian openssl": openssl}
+
+
+def test_refresh_images_says_what_changed_in_which_image(repin):
+    [entry], body = repin(
+        {
+            OLD.format(v="3.12"): versions("3.12.15", "3.5.4-1"),
+            NEW.format(v="3.12"): versions("3.12.15", "3.5.5-1"),
+            OLD.format(v="3.13"): versions("3.13.16", "3.5.4-1"),
+            NEW.format(v="3.13"): versions("3.13.16", "3.5.4-1"),
+        }
+    )
+    assert entry == (
+        "Rebuilt on the upstream images' latest builds: "
+        "Debian openssl 3.5.4-1 to 3.5.5-1 (the 3.12 image)."
+    )
+    assert "| 3.12 | `ghcr.io/astral-sh/uv:python3.12-trixie-slim` |" in "\n".join(body)
+
+
+def test_refresh_images_stops_when_the_new_image_cannot_be_read(repin):
+    with pytest.raises(subprocess.CalledProcessError):
+        repin(
+            {
+                OLD.format(v="3.12"): versions("3.12.15", "3.5.4-1"),
+                NEW.format(v="3.12"): subprocess.CalledProcessError(1, "docker run"),
+            }
+        )
+
+
+def test_refresh_images_claims_no_change_only_where_it_compared(repin):
+    gone = subprocess.CalledProcessError(1, "docker run")
+    [entry], _ = repin(
+        {
+            OLD.format(v="3.12"): gone,
+            NEW.format(v="3.12"): versions("3.12.15", "3.5.4-1"),
+            OLD.format(v="3.13"): versions("3.13.16", "3.5.4-1"),
+            NEW.format(v="3.13"): versions("3.13.16", "3.5.4-1"),
+        }
+    )
+    assert entry == (
+        "Rebuilt on the upstream images' latest builds, with no change to Python, uv or "
+        "the Debian packages in the 3.13 image. The previous upstream image for the 3.12 "
+        "image could no longer be read to compare."
+    )
+
+
+def test_refresh_images_claims_nothing_when_it_compared_nothing(repin):
+    gone = ValueError("unexpected output")
+    [entry], _ = repin(
+        {
+            OLD.format(v="3.12"): gone,
+            NEW.format(v="3.12"): versions("3.12.15", "3.5.4-1"),
+            OLD.format(v="3.13"): gone,
+            NEW.format(v="3.13"): versions("3.13.16", "3.5.4-1"),
+        }
+    )
+    assert "no change" not in entry
+    assert entry == (
+        "Rebuilt on the upstream images' latest builds. The previous upstream image for "
+        "the 3.12 and 3.13 images could no longer be read to compare."
+    )
+
+
 # refresh_packages
 
 

@@ -53,10 +53,12 @@ PIP_AUDIT = "pip-audit==2.10.1"
 ALWAYS_LATEST = ["certifi", "pip"]
 
 # One line each for Python and uv, then one per Debian source package, so that
-# openssl's several binary packages read as the one upgrade they are.
+# openssl's several binary packages read as the one upgrade they are. Each
+# command runs only if the one before succeeded, and probe() checks the shape:
+# a line gone missing would otherwise shift every version after it.
 PROBE = (
-    'python -c "import platform; print(platform.python_version())"; '
-    "uv --version | cut -d' ' -f2; "
+    'python -c "import platform; print(platform.python_version())" && '
+    "uv --version | cut -d' ' -f2 && "
     "dpkg-query -W -f '${source:Package} ${source:Version}\\n' | sort -u"
 )
 
@@ -82,19 +84,26 @@ def resolve(ref: str) -> str:
     return f"{tag}@{json.loads(manifest)['digest']}"
 
 
-def probe(ref: str) -> dict[str, str] | None:
+def probe(ref: str) -> dict[str, str]:
     """Python, uv and each Debian source package's version in the image.
 
-    None when the image can no longer be pulled, as an old pin's may not be.
+    Raises CalledProcessError when the image cannot be pulled or run, and
+    ValueError when what it printed is not what PROBE prints.
     """
-    try:
-        lines = run("docker", "run", "--rm", ref, "sh", "-c", PROBE).splitlines()
-    except subprocess.CalledProcessError:
-        return None
-    versions = {"Python": lines[0], "uv": lines[1]}
-    for line in lines[2:]:
-        package, version = line.split(" ", 1)
-        versions[f"Debian {package}"] = version
+    lines = run("docker", "run", "--rm", ref, "sh", "-c", PROBE).splitlines()
+    version = r"\d+\.\d+\.\d+\S*"
+    if not (
+        len(lines) > 2
+        and re.fullmatch(version, lines[0])
+        and re.fullmatch(version, lines[1])
+        and all(re.fullmatch(r"\S+ \S+", line) for line in lines[2:])
+    ):
+        raise ValueError(f"unexpected output from {ref}:\n" + "\n".join(lines[:5]))
+    python, uv, *packages = lines
+    versions = {"Python": python, "uv": uv}
+    for line in packages:
+        package, package_version = line.split(" ")
+        versions[f"Debian {package}"] = package_version
     return versions
 
 
@@ -134,8 +143,12 @@ def refresh_images() -> tuple[list[str], list[str]]:
         table.append(
             f"| {python} | `{image}` | `{before_digest[:19]}` | `{new.split('@')[1][:19]}` |"
         )
-        before, after = probe(old), probe(new)
-        if before is None or after is None:
+        # The new image is the one this releases, so one that cannot be read
+        # stops the run; an old pin's may no longer be pullable.
+        after = probe(new)
+        try:
+            before = probe(old)
+        except (subprocess.CalledProcessError, ValueError):
             unreadable.append(python)
             continue
         for name, change in diff(before, after).items():
@@ -157,12 +170,17 @@ def refresh_images() -> tuple[list[str], list[str]]:
         entry = f"Rebuilt {images(rebuilt)} on its upstream image's latest build"
     else:
         entry = f"Rebuilt {images(rebuilt)} on their upstream images' latest builds"
+    compared = [p for p in rebuilt if p not in unreadable]
     if parts:
         entry += ": " + ", ".join(parts) + "."
-    else:
+    elif compared and unreadable:
+        entry += f", with no change to Python, uv or the Debian packages in {images(compared)}."
+    elif compared:
         entry += ", with no change to Python, uv or the Debian packages."
+    else:
+        entry += "."
     if unreadable:
-        entry += f" The previous upstream image for {images(unreadable)} could no longer be pulled to compare."
+        entry += f" The previous upstream image for {images(unreadable)} could no longer be read to compare."
     body = ["### Upstream images", "", *table, "", *(f"- {part}" for part in parts)]
     return [entry], body
 
@@ -240,7 +258,14 @@ def raise_floors(fixes: dict[str, str]) -> list[str]:
         else:
             spec = spec.rstrip() + ("," if requirement.specifier else "") + f">={fix}"
         new = spec + semicolon + marker
-        text = text.replace(f'"{dependency}"', f'"{new}"')
+        # As written in the file: either TOML string quote, and not one whose
+        # escapes make it read differently from what tomllib returned.
+        quoted = [f"{q}{dependency}{q}" for q in "\"'" if f"{q}{dependency}{q}" in text]
+        if not quoted:
+            print(f"::warning::Could not find {dependency!r} in pyproject.toml to raise its floor")
+            continue
+        quote = quoted[0][0]
+        text = text.replace(quoted[0], f"{quote}{new}{quote}", 1)
         raised.append(new)
     if raised:
         PYPROJECT.write_text(text)
@@ -405,7 +430,7 @@ def main() -> None:
         outputs = {"changed": "false"}
     else:
         run("uv", "version", "--bump", "patch", "--no-sync", cwd=BASE)
-        version = tomllib.loads((BASE / "pyproject.toml").read_text())["project"]["version"]
+        version = tomllib.loads(PYPROJECT.read_text())["project"]["version"]
         carried = release_changelog(
             version, {"Changed": image_lines + changed, "Security": security}
         )
