@@ -126,9 +126,12 @@ pushes nothing. So a change can land over several pull requests and ship in one
 release:
 
 - **A change to the image**, anything under `pipecat-base/` or
-  `versions.yaml`, adds its entry under `[Unreleased]` in `CHANGELOG.md` and
-  leaves the version alone.
-- **A release** is a pull request that bumps the version, as below.
+  `versions.yaml` that changes what the released image contains or does, adds
+  its entry under `[Unreleased]` in `CHANGELOG.md` and leaves the version
+  alone. A change only to how the image is built, which leaves the released
+  image as it was, needs no entry.
+- **A release** is a pull request that bumps the version: by hand, as below,
+  or from the weekly refresh.
 
 Keep `main` releasable: anything merged ships with the next release, so a
 change that is not ready to ship waits on its own branch.
@@ -136,6 +139,43 @@ change that is not ready to ship waits on its own branch.
 The workflow tags each release `vX.Y.Z` itself, and that tag is how it knows a
 version is already out. Do not create or push `v` tags by hand: a tag for a
 version that has not been published yet makes the workflow skip publishing it.
+
+### Upstream Images and the Weekly Refresh
+
+Each Python's image is built from the upstream image pinned by digest under
+`base_images` in `versions.yaml`, so a release takes the upstream image
+recorded there, not whatever its tag points to at build time. A Python added to
+`python_versions` needs its pin as well, or the build fails; find the digest
+with `docker buildx imagetools inspect ghcr.io/astral-sh/uv:python3.X-trixie-slim`.
+
+Every Monday the
+[Refresh Base Images](../.github/workflows/refresh-base-images.yml) workflow
+prepares a release from what upstream has fixed since the last: it moves each
+pin to what its tag points to now, upgrades each locked package with a known
+vulnerability to the first release that fixes it, raising the floor in
+`pyproject.toml` to that release for a direct dependency, and takes the latest
+pip and certifi. When that changes anything, it bumps the patch version, writes
+the changelog, and opens a pull request from `refresh/base-images`, whose body
+lists each change. Its checks run like any other pull request's; merging it
+releases the version.
+
+- **Run it on demand** after an upstream fix that should not wait for Monday:
+  `gh workflow run refresh-base-images.yml`, or from the Actions tab.
+- **Do not push to `refresh/base-images`.** The next run replaces the branch;
+  a change belongs in a pull request of its own.
+- **Merge a hand-made release first.** The refresh bumps the version from
+  `main`, so a refresh pull request opened before another release merges
+  carries the same version. Run the refresh again after that merge.
+- A release made by hand takes the pinned images as they are; run the refresh
+  first to take upstream's latest.
+
+The workflow opens its pull request as a GitHub App, because one opened with
+the workflow's own token would run no checks. The app needs read and write
+access to contents and pull requests on this repository, its client ID in the
+`REFRESH_APP_CLIENT_ID` repository variable, and a private key in the
+`REFRESH_APP_PRIVATE_KEY` repository secret.
+
+### Releasing by Hand
 
 To release a new version of the base image:
 
