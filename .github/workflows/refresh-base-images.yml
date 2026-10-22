@@ -71,9 +71,17 @@ jobs:
           path: ${{ runner.temp }}/refresh
 
       # Only the four files the refresh writes; add-paths below holds the
-      # commit to them as well.
+      # commit to them as well. --include filters only where a patch writes,
+      # not what it reads: a copy or rename names its source freely, so a patch
+      # could copy any file the runner can read onto one of the four. The
+      # refresh only edits files that exist, so --summary, which lists every
+      # create, delete, rename, copy and mode change, must list nothing.
       - name: Apply the refresh
         run: |
+          if [[ -n $(git apply --summary "$RUNNER_TEMP/refresh/changes.patch") ]]; then
+            echo "::error::The patch creates, deletes, renames or copies a file, or changes a mode, which the refresh never does."
+            exit 1
+          fi
           git apply \
             --include=versions.yaml \
             --include=pipecat-base/pyproject.toml \

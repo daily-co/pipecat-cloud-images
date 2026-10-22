@@ -176,7 +176,9 @@ access to contents and pull requests on this repository, its client ID in the
 `REFRESH_APP_PRIVATE_KEY` repository secret. The script runs in a job of its
 own, with no secrets and read-only access, because it runs whatever PyPI
 serves that day; a second job, which runs only actions pinned by commit,
-applies its changes and opens the pull request with the app's key. When a run
+applies its changes and opens the pull request with the app's key. It accepts
+only edits to the four files the script writes, and refuses a patch that
+creates, deletes, renames or copies a file. When a run
 replaces the branch of a pull request already open, it dismisses that pull
 request's approvals, so what merges is what was reviewed.
 
