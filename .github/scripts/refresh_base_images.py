@@ -329,8 +329,8 @@ def refresh_packages() -> tuple[list[str], list[str], list[str]]:
     changed = []
     if unresolved:
         changed.append(
-            "Update dependencies with a known vulnerability to their latest releases, "
-            "which do not resolve it yet: " + ", ".join(unresolved) + "."
+            "Update dependencies with a known vulnerability to newer releases that the "
+            "audit still flags: " + ", ".join(unresolved) + "."
         )
     if latest:
         changed.append(
@@ -425,7 +425,7 @@ def main() -> None:
     security, changed, package_body = refresh_packages()
     if not (image_lines or security or changed):
         print(
-            "Nothing to release: every pinned image is current and no locked package is vulnerable."
+            "Nothing to release: every pinned image is current, and the lock has no upgrade to take."
         )
         outputs = {"changed": "false"}
     else:

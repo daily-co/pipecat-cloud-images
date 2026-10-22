@@ -7,6 +7,7 @@ fastapi[standard]).
 
 import importlib.util
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -59,6 +60,16 @@ def project(tmp_path, monkeypatch):
     commands = []
     monkeypatch.setattr(refresh, "run", lambda *args, cwd=None: commands.append(args) or "")
     return tmp_path, commands
+
+
+# run
+
+
+def test_run_says_which_command_failed_and_why(capsys):
+    script = "import sys; sys.exit('manifest unknown')"
+    with pytest.raises(subprocess.CalledProcessError):
+        refresh.run(sys.executable, "-c", script)
+    assert f"{sys.executable} -c {script} failed:\nmanifest unknown" in capsys.readouterr().err
 
 
 # first_fix
@@ -205,14 +216,16 @@ def test_refresh_images_says_what_changed_in_which_image(repin):
     assert "| 3.12 | `ghcr.io/astral-sh/uv:python3.12-trixie-slim` |" in "\n".join(body)
 
 
-def test_refresh_images_stops_when_the_new_image_cannot_be_read(repin):
+def test_refresh_images_stops_when_the_new_image_cannot_be_read(repin, monkeypatch):
+    # Failed through run, not probe, so that probe() is held to letting it out.
+    def run(*args, cwd=None):
+        if NEW.format(v="3.12") in args:
+            raise subprocess.CalledProcessError(125, args, stderr="manifest unknown")
+        return "3.12.15\n0.13.5\nopenssl 3.5.4-1\n"
+
+    monkeypatch.setattr(refresh, "run", run)
     with pytest.raises(subprocess.CalledProcessError):
-        repin(
-            {
-                OLD.format(v="3.12"): versions("3.12.15", "3.5.4-1"),
-                NEW.format(v="3.12"): subprocess.CalledProcessError(1, "docker run"),
-            }
-        )
+        refresh.refresh_images()
 
 
 def test_refresh_images_claims_no_change_only_where_it_compared(repin):
@@ -289,8 +302,8 @@ def test_an_upgrade_the_audit_still_flags_is_not_called_a_fix(packages, project,
     )
     assert security == []
     assert changed == [
-        "Update dependencies with a known vulnerability to their latest releases, which do "
-        "not resolve it yet: somelib 1.0.0 to 1.1.0."
+        "Update dependencies with a known vulnerability to newer releases that the audit "
+        "still flags: somelib 1.0.0 to 1.1.0."
     ]
     assert "- somelib 1.0.0 to 1.1.0, **still vulnerable**: GHSA-1" in body
     assert "- somelib 1.1.0, fixed in no release yet" in body
@@ -383,3 +396,73 @@ def test_release_changelog_stops_on_an_entry_with_no_heading(project):
         released(tmp, "- An orphan.\n\n", {"Changed": ["Rebuilt."]})
     assert "- An orphan." in (tmp / "CHANGELOG.md").read_text()
     assert "## [0.2.9]" not in (tmp / "CHANGELOG.md").read_text()
+
+
+# main
+
+
+@pytest.fixture
+def release(project, monkeypatch):
+    """Run main() on what refresh_images and refresh_packages are stubbed to find."""
+    tmp, commands = project
+
+    def run(*args, cwd=None):
+        commands.append(args)
+        if args[:3] == ("uv", "version", "--bump"):
+            pyproject = tmp / "pyproject.toml"
+            pyproject.write_text(pyproject.read_text().replace('"0.2.8"', '"0.2.9"'))
+        return ""
+
+    monkeypatch.setattr(refresh, "run", run)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp / "output"))
+    monkeypatch.setattr(sys, "argv", ["refresh_base_images.py", "--body", str(tmp / "body.md")])
+
+    def setup(images: tuple, packages: tuple, unreleased: str = ""):
+        (tmp / "CHANGELOG.md").write_text(CHANGELOG.format(unreleased=unreleased))
+        monkeypatch.setattr(refresh, "refresh_images", lambda: images)
+        monkeypatch.setattr(refresh, "refresh_packages", lambda: packages)
+        refresh.main()
+        output = dict(line.split("=", 1) for line in (tmp / "output").read_text().splitlines())
+        body = tmp / "body.md"
+        return output, body.read_text() if body.exists() else None
+
+    return setup
+
+
+def test_main_releases_the_next_version_and_lists_what_was_waiting(release):
+    output, body = release(
+        (["Rebuilt."], ["### Upstream images"]),
+        (["Update aiohttp."], [], ["### Locked packages", "", "- aiohttp 3.14.3 to 3.14.4"]),
+        unreleased="### Added\n\n- A feature.\n\n",
+    )
+    assert output == {
+        "changed": "true",
+        "version": "0.2.9",
+        "title": "Release v0.2.9: refresh upstream images and locked packages",
+    }
+    assert body.startswith("Merging this releases v0.2.9, through `docker-publish.yml`.")
+    assert "- aiohttp 3.14.3 to 3.14.4" in body
+    assert (
+        "### Also released\n\n"
+        "Already under `[Unreleased]` in `CHANGELOG.md`, so this releases it too:\n\n"
+        "#### Added\n\n- A feature.\n"
+    ) in body
+
+
+def test_main_names_only_what_it_refreshed(release):
+    output, body = release(([], []), ([], ["Update pip."], ["### Locked packages"]))
+    assert output["title"] == "Release v0.2.9: refresh locked packages"
+    assert "### Also released" not in body
+
+
+def test_main_releases_nothing_in_a_quiet_week(release, project, capsys):
+    tmp, commands = project
+    stuck = ["### Locked packages", "", "- stuck 1.0, fixed in 2.0"]
+    output, body = release(([], []), ([], [], stuck))
+    assert output == {"changed": "false"}
+    assert body is None
+    assert commands == []
+    assert (tmp / "pyproject.toml").read_text() == PYPROJECT
+    assert capsys.readouterr().out == (
+        "Nothing to release: every pinned image is current, and the lock has no upgrade to take.\n"
+    )
