@@ -64,7 +64,13 @@ SECTION_ORDER = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security
 
 
 def run(*args: str, cwd: Path | None = None) -> str:
-    return subprocess.run(args, cwd=cwd, check=True, capture_output=True, text=True).stdout
+    try:
+        return subprocess.run(args, cwd=cwd, check=True, capture_output=True, text=True).stdout
+    except subprocess.CalledProcessError as e:
+        # The output is captured, so the error alone would give only the exit
+        # status; nobody watches a scheduled run, so its log must say why.
+        print(f"{' '.join(args)} failed:\n{e.stderr}", file=sys.stderr)
+        raise
 
 
 def resolve(ref: str) -> str:
@@ -255,30 +261,32 @@ def refresh_packages() -> tuple[list[str], list[str], list[str]]:
     ]
     try:
         run("uv", "lock", *args, cwd=BASE)
-    except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError:
         # A first fix the other locked packages cannot take: let the resolver
         # choose each package's version instead.
-        print(f"uv lock could not take the first fixes, so takes the latest instead:\n{e.stderr}")
+        print("uv lock could not take the first fixes, so takes the latest instead")
         run("uv", "lock", *(a for name in upgrades for a in ("--upgrade-package", name)), cwd=BASE)
     after = locked()
     changes = diff(before, after)
     if not changes:
-        for name, d in vulnerable.items():
-            print(f"{name} {d['version']} is vulnerable and has no fix the lock can take")
-        return [], [], []
+        lines = still_vulnerable(list(vulnerable.values()))
+        return [], [], ["### Locked packages", *lines] if lines else []
     remaining = audit()
-    # A fix the audit now accepts. An advisory may name no fixed release, and
-    # then the floor is the one the lock moved to.
     still = {d["name"] for d in remaining}
+    # The ones the audit now accepts. An advisory may name no fixed release,
+    # and then the floor is the one the lock moved to.
+    resolved = [n for n in vulnerable if n in changes and n not in still]
     raised = raise_floors(
         {
             name: upgrades[name] or after[name]
-            for name in vulnerable
-            if name in changes and name not in still and ", " not in after[name]
+            for name in resolved
+            if name in after and ", " not in after[name]
         }
     )
 
-    fixed = [describe(n, c) for n, c in changes.items() if n in vulnerable]
+    fixed = [describe(n, changes[n]) for n in resolved]
+    # Upgraded to a release the audit still flags: said as an upgrade, not a fix.
+    unresolved = [describe(n, changes[n]) for n in vulnerable if n in changes and n in still]
     latest = [
         describe(n, c) for n, c in changes.items() if n in ALWAYS_LATEST and n not in vulnerable
     ]
@@ -291,6 +299,11 @@ def refresh_packages() -> tuple[list[str], list[str], list[str]]:
             "Update dependencies to resolve security vulnerabilities: " + ", ".join(fixed) + "."
         )
     changed = []
+    if unresolved:
+        changed.append(
+            "Update dependencies with a known vulnerability to their latest releases, "
+            "which do not resolve it yet: " + ", ".join(unresolved) + "."
+        )
     if latest:
         changed.append(
             "Update pip and certifi, which the image keeps at their latest: "
@@ -304,6 +317,8 @@ def refresh_packages() -> tuple[list[str], list[str], list[str]]:
     for name, d in vulnerable.items():
         ids = ", ".join(sorted({v["id"] for v in d["vulns"]}))
         status = describe(name, changes[name]) if name in changes else "**not fixed**"
+        if name in still and name in changes:
+            status += ", **still vulnerable**"
         body.append(f"- {status}: {ids}")
     body += [f"- {line}" for line in latest]
     body += [f"- {line}, alongside" for line in alongside]
@@ -311,19 +326,26 @@ def refresh_packages() -> tuple[list[str], list[str], list[str]]:
         body.append(
             "- Raised the floor in `pyproject.toml`: " + ", ".join(f"`{r}`" for r in raised)
         )
-    if remaining:
-        body += [
-            "",
-            "Still vulnerable after the upgrade; a fix may be unreleased, or outside "
-            "what `pyproject.toml` allows:",
-            "",
-        ]
-        for d in remaining:
-            fixes = sorted({f for v in d["vulns"] for f in v.get("fix_versions", [])})
-            body.append(
-                f"- {d['name']} {d['version']}, fixed in {', '.join(fixes) or 'no release yet'}"
-            )
+    body += still_vulnerable(remaining)
     return security, changed, body
+
+
+def still_vulnerable(dependencies: list[dict]) -> list[str]:
+    """The PR body's lines for packages left vulnerable, each also a warning on the run."""
+    if not dependencies:
+        return []
+    lines = [
+        "",
+        "Still vulnerable after the upgrade; a fix may be unreleased, or outside "
+        "what `pyproject.toml` allows:",
+        "",
+    ]
+    for d in dependencies:
+        fixes = sorted({f for v in d["vulns"] for f in v.get("fix_versions", [])})
+        line = f"{d['name']} {d['version']}, fixed in {', '.join(fixes) or 'no release yet'}"
+        print(f"::warning::Still vulnerable: {line}")
+        lines.append(f"- {line}")
+    return lines
 
 
 def bullet(text: str) -> str:
@@ -332,15 +354,23 @@ def bullet(text: str) -> str:
     )
 
 
-def release_changelog(version: str, sections: dict[str, list[str]]) -> None:
-    """Add the entries under [Unreleased], then release it as the version."""
+def release_changelog(version: str, sections: dict[str, list[str]]) -> str:
+    """Add the entries under [Unreleased], then release it as the version.
+
+    Returns what was already under [Unreleased], which ships in this release
+    too.
+    """
     text = CHANGELOG.read_text()
     unreleased = re.search(r"^## \[Unreleased\]\n(.*?)(?=^## \[)", text, re.M | re.S)
     if not unreleased:
         sys.exit("CHANGELOG.md has no [Unreleased] section followed by a release")
-    # What is already under [Unreleased] ships in this release too.
     parts = re.split(r"^### (.+)\n", unreleased.group(1), flags=re.M)
-    entries = {name: [body.strip()] for name, body in zip(parts[1::2], parts[2::2])}
+    # Rewritten from the headings below, so an entry above them would be lost.
+    if parts[0].strip():
+        sys.exit("CHANGELOG.md has an entry under [Unreleased] with no ### heading above it")
+    entries: dict[str, list[str]] = {}
+    for name, body in zip(parts[1::2], parts[2::2]):
+        entries.setdefault(name, []).append(body.strip())
     for name, lines in sections.items():
         if lines:
             entries.setdefault(name, []).extend(bullet(line) for line in lines)
@@ -353,6 +383,7 @@ def release_changelog(version: str, sections: dict[str, list[str]]) -> None:
     )
     section = f"## [Unreleased]\n\n## [{version}] - {date}\n\n{released}"
     CHANGELOG.write_text(text[: unreleased.start()] + section + text[unreleased.end() :])
+    return unreleased.group(1).strip()
 
 
 def main() -> None:
@@ -372,7 +403,20 @@ def main() -> None:
     else:
         run("uv", "version", "--bump", "patch", "--no-sync", cwd=BASE)
         version = tomllib.loads((BASE / "pyproject.toml").read_text())["project"]["version"]
-        release_changelog(version, {"Changed": image_lines + changed, "Security": security})
+        carried = release_changelog(
+            version, {"Changed": image_lines + changed, "Security": security}
+        )
+        if carried:
+            # One level down, under this body's own headings.
+            carried = re.sub(r"^### ", "#### ", carried, flags=re.M)
+            package_body += [
+                "",
+                "### Also released",
+                "",
+                "Already under `[Unreleased]` in `CHANGELOG.md`, so this releases it too:",
+                "",
+                carried,
+            ]
         what = " and ".join(
             w
             for w, did in (
