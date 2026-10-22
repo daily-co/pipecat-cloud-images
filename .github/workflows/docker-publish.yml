@@ -73,13 +73,30 @@ jobs:
           VERSION: ${{ steps.get-versions.outputs.base-version }}
         # ls-remote exits 2 when the tag does not exist; any other failure
         # stops the run rather than be taken as unreleased and republish.
+        #
+        # A pull request never publishes, but one that changes what an already
+        # released version's changelog section says would merge green and ship
+        # nothing: a release pull request opened before another release of the
+        # same version merged, once its CHANGELOG.md conflict is resolved.
         run: |
+          status=0
+          git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null || status=$?
+          if [[ $status != 0 && $status != 2 ]]; then
+            echo "::error::Could not check for the tag v$VERSION (git ls-remote exited $status)."
+            exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == pull_request && $status == 0 ]]; then
+            git fetch --quiet --depth=1 origin tag "v$VERSION"
+            section() { awk -v h="## [$VERSION]" 'index($0, h) == 1 { on = 1 } on && /^## \[/ && index($0, h) != 1 { exit } on'; }
+            if ! diff <(git show "v$VERSION:pipecat-base/CHANGELOG.md" | section) <(section < pipecat-base/CHANGELOG.md); then
+              echo "::error file=pipecat-base/CHANGELOG.md::This changes the changelog for v$VERSION, which is already released, so merging it would publish nothing. Move the changes under [Unreleased], or release them as a new version: for a weekly refresh, run it again."
+              exit 1
+            fi
+          fi
           if [[ "$GITHUB_EVENT_NAME" != push || "$GITHUB_REF" != refs/heads/main ]]; then
             echo "publish=false" >> $GITHUB_OUTPUT
             exit 0
           fi
-          status=0
-          git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null || status=$?
           case $status in
             0)
               echo "::notice::v$VERSION is already released: building and checking only. Bump the version in pipecat-base/pyproject.toml to publish."
@@ -88,10 +105,6 @@ jobs:
             2)
               echo "::notice::Publishing v$VERSION."
               echo "publish=true" >> $GITHUB_OUTPUT
-              ;;
-            *)
-              echo "::error::Could not check for the tag v$VERSION (git ls-remote exited $status)."
-              exit 1
               ;;
           esac
 

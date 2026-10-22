@@ -1,0 +1,68 @@
+name: Refresh Base Images
+
+# Weekly, and on demand: prepares a release from what upstream has fixed since
+# the last. .github/scripts/refresh_base_images.py moves each Python's pinned
+# upstream image in versions.yaml to what its tag points to now, upgrades the
+# locked packages with a known vulnerability, and takes the latest pip and
+# certifi. When that changes anything, it bumps the patch version and writes
+# the changelog, and this opens a pull request for it, or updates the one
+# already open. Merging it publishes the release through docker-publish.yml.
+on:
+  schedule:
+    # Mondays, 06:00 UTC.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        # setup-uv publishes no moving major tags since v8, so it is pinned.
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Refresh
+        id: refresh
+        run: uv run .github/scripts/refresh_base_images.py --body "$RUNNER_TEMP/body.md"
+
+      # A pull request opened with the workflow's own token runs no workflows,
+      # so its tests and image build would never start: the pull request is
+      # opened as the refresh GitHub App instead. The two actions below hold
+      # that token, so they are pinned by commit.
+      - name: Get the refresh app's token
+        if: steps.refresh.outputs.changed == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.REFRESH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.REFRESH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Open or update the release pull request
+        if: steps.refresh.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          # One branch, so a run while the last pull request is still open
+          # replaces it rather than opening a second release of the same
+          # version.
+          branch: refresh/base-images
+          delete-branch: true
+          add-paths: |
+            versions.yaml
+            pipecat-base/pyproject.toml
+            pipecat-base/uv.lock
+            pipecat-base/CHANGELOG.md
+          commit-message: ${{ steps.refresh.outputs.title }}
+          title: ${{ steps.refresh.outputs.title }}
+          body-path: ${{ runner.temp }}/body.md
