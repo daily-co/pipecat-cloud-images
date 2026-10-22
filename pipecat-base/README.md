@@ -173,7 +173,12 @@ The workflow opens its pull request as a GitHub App, because one opened with
 the workflow's own token would run no checks. The app needs read and write
 access to contents and pull requests on this repository, its client ID in the
 `REFRESH_APP_CLIENT_ID` repository variable, and a private key in the
-`REFRESH_APP_PRIVATE_KEY` repository secret.
+`REFRESH_APP_PRIVATE_KEY` repository secret. The script runs in a job of its
+own, with no secrets and read-only access, because it runs whatever PyPI
+serves that day; a second job, which runs only actions pinned by commit,
+applies its changes and opens the pull request with the app's key. When a run
+replaces the branch of a pull request already open, it dismisses that pull
+request's approvals, so what merges is what was reviewed.
 
 ### Releasing by Hand
 
