@@ -54,11 +54,13 @@ jobs:
           fi
 
           # A Python without a pinned base image would fall back to the
-          # Dockerfile's floating default, so every one must have its own.
+          # Dockerfile's floating default, so every one must have its own, and
+          # from astral-sh/uv's repository: the refresh keeps whatever
+          # repository a pin names.
           for v in $(yq '.base.python_versions[]' versions.yaml); do
             ref=$(v="$v" yq '.base.base_images[strenv(v)] // ""' versions.yaml)
-            if ! [[ $ref == *":python$v-"*@sha256:* && $ref =~ @sha256:[0-9a-f]{64}$ ]]; then
-              echo "::error file=versions.yaml::base_images needs '$v' as a python$v tag pinned by @sha256 digest, found '$ref'"
+            if ! [[ $ref == "ghcr.io/astral-sh/uv:python$v-"*@sha256:* && $ref =~ @sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error file=versions.yaml::base_images needs '$v' as a ghcr.io/astral-sh/uv:python$v- tag pinned by @sha256 digest, found '$ref'"
               exit 1
             fi
           done

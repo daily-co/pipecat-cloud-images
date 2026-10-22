@@ -122,7 +122,7 @@ def refresh_images() -> tuple[list[str], list[str]]:
     # A change, as described, mapped to the Pythons whose image it is in, so
     # one that every image shares (uv, Debian) is said once.
     changes: dict[str, list[str]] = {}
-    table = ["| Python | Before | After |", "|---|---|---|"]
+    table = ["| Python | Image | Before | After |", "|---|---|---|---|"]
     rebuilt, unreadable = [], []
     for python, old in pins.items():
         new = resolve(old)
@@ -130,7 +130,10 @@ def refresh_images() -> tuple[list[str], list[str]]:
             continue
         rebuilt.append(python)
         text = text.replace(old, new)
-        table.append(f"| {python} | `{old.split('@')[1][:19]}` | `{new.split('@')[1][:19]}` |")
+        image, before_digest = old.split("@")
+        table.append(
+            f"| {python} | `{image}` | `{before_digest[:19]}` | `{new.split('@')[1][:19]}` |"
+        )
         before, after = probe(old), probe(new)
         if before is None or after is None:
             unreadable.append(python)
