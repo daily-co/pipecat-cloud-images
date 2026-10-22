@@ -65,6 +65,17 @@ jobs:
             fi
           done
 
+          # uv sync --locked installs from wherever the lock says, and trusts a
+          # hash the lock supplies with it, so a lock that points one wheel at
+          # another host still installs. A refresh's lock diff changes dozens
+          # of URLs at once, where one changed host is easy to miss.
+          outside=$(grep -oE '(url|registry|git|path|directory) = "[^"]*"' pipecat-base/uv.lock \
+            | grep -vE '^(url = "https://files\.pythonhosted\.org/|registry = "https://pypi\.org/simple")' || true)
+          if [[ -n $outside ]]; then
+            echo "::error file=pipecat-base/uv.lock::uv.lock installs from outside PyPI: $(head -1 <<< "$outside")"
+            exit 1
+          fi
+
           echo "base-version=$BASE_VERSION" >> $GITHUB_OUTPUT
           echo "python-versions=$PYTHON_VERSIONS" >> $GITHUB_OUTPUT
           echo "default-python=$DEFAULT_PYTHON" >> $GITHUB_OUTPUT

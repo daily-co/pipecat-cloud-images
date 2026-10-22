@@ -147,6 +147,8 @@ Each Python's image is built from the upstream image pinned by digest under
 recorded there, not whatever its tag points to at build time. A Python added to
 `python_versions` needs its pin as well, or the build fails; find the digest
 with `docker buildx imagetools inspect ghcr.io/astral-sh/uv:python3.X-trixie-slim`.
+The build also fails if `uv.lock` installs a package from anywhere but PyPI,
+since a changed host is easy to miss in a lock's diff.
 
 Every Monday the
 [Refresh Base Images](../.github/workflows/refresh-base-images.yml) workflow
