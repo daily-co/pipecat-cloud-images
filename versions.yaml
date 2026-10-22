@@ -5,3 +5,13 @@ base:
     - '3.13'
     - '3.14'
   default_python: '3.12'
+  # The upstream image each Python's image is built FROM, pinned by digest so
+  # that a build takes the upstream image recorded here and an upstream update
+  # arrives as a change to this file. The tag says what the digest was resolved
+  # from; with a digest present, Docker pulls by the digest alone. Every
+  # version in python_versions needs an entry.
+  base_images:
+    '3.11': ghcr.io/astral-sh/uv:python3.11-trixie-slim@sha256:e1726dc72f5a45d6fde5814c9bdb87cfdf46ea4fd8a5fd806fdda378fffb4ae5
+    '3.12': ghcr.io/astral-sh/uv:python3.12-trixie-slim@sha256:9b8477a5f2e2f96fa99eaecb7680c1c4c9f527926430f3b630bfb2c3641f8f20
+    '3.13': ghcr.io/astral-sh/uv:python3.13-trixie-slim@sha256:331fbb158258608b9391e802305a9a2c9e42d689435c1d98706647122a122ab0
+    '3.14': ghcr.io/astral-sh/uv:python3.14-trixie-slim@sha256:d8e732839dfc4225a1ff698803b478b2223c05636c055d3add41ab9dbec0f315

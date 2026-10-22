@@ -8,7 +8,7 @@ This repository contains source code for the official Pipecat Cloud base image.
 
 - **[pipecat-base](./pipecat-base)**: Source code for the `dailyco/pipecat-base` Docker image, which serves as the foundation for Pipecat Cloud agents.
 - **[local-test](./local-test)**: A mock of Pipecat Cloud's session routes, for testing an agent container locally.
-- **[versions.yaml](./versions.yaml)**: The Python versions the image is built for, and the default.
+- **[versions.yaml](./versions.yaml)**: The Python versions the image is built for, the default, and the upstream image each is built from, pinned by digest.
 
 ## Development
 

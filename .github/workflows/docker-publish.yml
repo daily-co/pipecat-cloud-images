@@ -36,6 +36,7 @@ jobs:
       base-version: ${{ steps.get-versions.outputs.base-version }}
       python-versions: ${{ steps.get-versions.outputs.python-versions }}
       default-python: ${{ steps.get-versions.outputs.default-python }}
+      base-images: ${{ steps.get-versions.outputs.base-images }}
       publish: ${{ steps.release.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
@@ -45,15 +46,27 @@ jobs:
           BASE_VERSION=$(yq '.project.version' pipecat-base/pyproject.toml)
           PYTHON_VERSIONS=$(yq '.base.python_versions | @json' versions.yaml)
           DEFAULT_PYTHON=$(yq '.base.default_python' versions.yaml)
+          BASE_IMAGES=$(yq -o=json -I=0 '.base.base_images' versions.yaml)
 
           if ! [[ $BASE_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid base version format in pipecat-base/pyproject.toml"
             exit 1
           fi
 
+          # A Python without a pinned base image would fall back to the
+          # Dockerfile's floating default, so every one must have its own.
+          for v in $(yq '.base.python_versions[]' versions.yaml); do
+            ref=$(v="$v" yq '.base.base_images[strenv(v)] // ""' versions.yaml)
+            if ! [[ $ref == *":python$v-"*@sha256:* && $ref =~ @sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error file=versions.yaml::base_images needs '$v' as a python$v tag pinned by @sha256 digest, found '$ref'"
+              exit 1
+            fi
+          done
+
           echo "base-version=$BASE_VERSION" >> $GITHUB_OUTPUT
           echo "python-versions=$PYTHON_VERSIONS" >> $GITHUB_OUTPUT
           echo "default-python=$DEFAULT_PYTHON" >> $GITHUB_OUTPUT
+          echo "base-images=$BASE_IMAGES" >> $GITHUB_OUTPUT
 
       - id: release
         env:
@@ -113,6 +126,7 @@ jobs:
           build-args: |
             VERSION=signal-check
             PYTHON_VERSION=${{ needs.find-images.outputs.default-python }}
+            BASE_IMAGE=${{ fromJson(needs.find-images.outputs.base-images)[needs.find-images.outputs.default-python] }}
 
       - name: Build an agent image on it
         # app.py refuses to start without pipecat-ai, which the base image
@@ -189,6 +203,7 @@ jobs:
           build-args: |
             VERSION=${{ needs.find-images.outputs.base-version }}
             PYTHON_VERSION=${{ matrix.python-version }}
+            BASE_IMAGE=${{ fromJson(needs.find-images.outputs.base-images)[matrix.python-version] }}
 
       - name: Verify the pushed image is multi-arch
         # Regression guard so a single-arch base cannot land again silently.

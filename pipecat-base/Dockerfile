@@ -1,6 +1,14 @@
-# Use a Python image with uv pre-installed
+# Use a Python image with uv pre-installed. CI passes BASE_IMAGE from
+# versions.yaml, pinned by digest; the default follows the upstream tag, for a
+# local build.
 ARG PYTHON_VERSION=3.12
-FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-trixie-slim
+ARG BASE_IMAGE=ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-trixie-slim
+FROM ${BASE_IMAGE}
+
+# A digest says nothing about the Python behind it, so check the one the image
+# is tagged for is the one it has.
+ARG PYTHON_VERSION
+RUN python -c "import sys; v = '%d.%d' % sys.version_info[:2]; sys.exit(None if v == '${PYTHON_VERSION}' else f'BASE_IMAGE has Python {v}, not ${PYTHON_VERSION}')"
 
 # Install the project into `/app`
 WORKDIR /app
