@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-10-22
+
+### Security
+
+- `/app/.venv` no longer trusts the eMudhra/emSign certificate authorities
+  whose private keys were found to be weak enough to forge certificates from
+  ([advisory](https://discuss.python.org/t/information-for-python-users-regarding-emudhra-emsign-ca-certificate-security-incident/109576)).
+  certifi, the CA bundle httpx and requests verify against, is now 2026.10.19,
+  and pip, which keeps its own copy and installs an agent image's
+  requirements, is 26.2.2. An agent image picks this up when rebuilt on this
+  version; one that pins certifi or pip below these versions in its own
+  requirements must raise the pins too. A package that carries its own roots
+  keeps its own trust: grpcio through 1.84.0 still includes the affected root,
+  so an agent that reaches Google services over gRPC should set
+  `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH=/etc/ssl/certs/ca-certificates.crt`, which
+  replaces grpcio's roots with the system's.
+
 ## [0.2.7] - 2026-10-19
 
 ### Added

@@ -1,6 +1,6 @@
 [project]
 name = "pipecat-base"
-version = "0.2.7"
+version = "0.2.8"
 description = "Pipecat Cloud Base Image"
 requires-python = ">=3.11"
 dependencies = [
@@ -13,7 +13,12 @@ dependencies = [
     # app.py imports aiohttp itself, so its security floor is held here rather
     # than left to whichever version pipecatcloud happens to bring.
     "aiohttp>=3.14.3,<4",
-    "pip>=26.2",
+    # pip and certifi are floored for the eMudhra/emSign CA distrust: earlier
+    # releases still trust certificates issued from those CAs' weak keys.
+    # certifi comes through httpx, and is what it verifies against; pip vendors
+    # its own copy, so only pip's release fixes it.
+    "certifi>=2026.10.19",
+    "pip>=26.2.2",
     "nltk>=3.10.3,<4",
 ]
 
