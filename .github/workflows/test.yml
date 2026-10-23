@@ -18,7 +18,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
         # setup-uv publishes no moving major tags since v8, so it is pinned.
@@ -39,7 +39,7 @@ jobs:
       python-versions: ${{ steps.get.outputs.python-versions }}
       default-python: ${{ steps.get.outputs.default-python }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - id: get
         # The Python versions the images are built for, as docker-publish reads them.
@@ -84,7 +84,7 @@ jobs:
             pipecat-spec: pipecat-ai[moq]
             expect-moq: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
