@@ -36,6 +36,7 @@ jobs:
       base-version: ${{ steps.get-versions.outputs.base-version }}
       python-versions: ${{ steps.get-versions.outputs.python-versions }}
       default-python: ${{ steps.get-versions.outputs.default-python }}
+      base-images: ${{ steps.get-versions.outputs.base-images }}
       publish: ${{ steps.release.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
@@ -45,28 +46,70 @@ jobs:
           BASE_VERSION=$(yq '.project.version' pipecat-base/pyproject.toml)
           PYTHON_VERSIONS=$(yq '.base.python_versions | @json' versions.yaml)
           DEFAULT_PYTHON=$(yq '.base.default_python' versions.yaml)
+          BASE_IMAGES=$(yq -o=json -I=0 '.base.base_images' versions.yaml)
 
           if ! [[ $BASE_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid base version format in pipecat-base/pyproject.toml"
             exit 1
           fi
 
+          # A Python without a pinned base image would fall back to the
+          # Dockerfile's floating default, so every one must have its own, and
+          # from astral-sh/uv's repository: the refresh keeps whatever
+          # repository a pin names.
+          for v in $(yq '.base.python_versions[]' versions.yaml); do
+            ref=$(v="$v" yq '.base.base_images[strenv(v)] // ""' versions.yaml)
+            if ! [[ $ref == "ghcr.io/astral-sh/uv:python$v-"*@sha256:* && $ref =~ @sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error file=versions.yaml::base_images needs '$v' as a ghcr.io/astral-sh/uv:python$v- tag pinned by @sha256 digest, found '$ref'"
+              exit 1
+            fi
+          done
+
+          # uv sync --locked installs from wherever the lock says, and trusts a
+          # hash the lock supplies with it, so a lock that points one wheel at
+          # another host still installs. A refresh's lock diff changes dozens
+          # of URLs at once, where one changed host is easy to miss.
+          outside=$(grep -oE '(url|registry|git|path|directory) = "[^"]*"' pipecat-base/uv.lock \
+            | grep -vE '^(url = "https://files\.pythonhosted\.org/|registry = "https://pypi\.org/simple")' || true)
+          if [[ -n $outside ]]; then
+            echo "::error file=pipecat-base/uv.lock::uv.lock installs from outside PyPI: $(head -1 <<< "$outside")"
+            exit 1
+          fi
+
           echo "base-version=$BASE_VERSION" >> $GITHUB_OUTPUT
           echo "python-versions=$PYTHON_VERSIONS" >> $GITHUB_OUTPUT
           echo "default-python=$DEFAULT_PYTHON" >> $GITHUB_OUTPUT
+          echo "base-images=$BASE_IMAGES" >> $GITHUB_OUTPUT
 
       - id: release
         env:
           VERSION: ${{ steps.get-versions.outputs.base-version }}
         # ls-remote exits 2 when the tag does not exist; any other failure
         # stops the run rather than be taken as unreleased and republish.
+        #
+        # A pull request never publishes, but one that changes what an already
+        # released version's changelog section says would merge green and ship
+        # nothing: a release pull request opened before another release of the
+        # same version merged, once its CHANGELOG.md conflict is resolved.
         run: |
+          status=0
+          git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null || status=$?
+          if [[ $status != 0 && $status != 2 ]]; then
+            echo "::error::Could not check for the tag v$VERSION (git ls-remote exited $status)."
+            exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == pull_request && $status == 0 ]]; then
+            git fetch --quiet --depth=1 origin tag "v$VERSION"
+            section() { awk -v h="## [$VERSION]" 'index($0, h) == 1 { on = 1 } on && /^## \[/ && index($0, h) != 1 { exit } on'; }
+            if ! diff <(git show "v$VERSION:pipecat-base/CHANGELOG.md" | section) <(section < pipecat-base/CHANGELOG.md); then
+              echo "::error file=pipecat-base/CHANGELOG.md::This changes the changelog for v$VERSION, which is already released, so merging it would publish nothing. Move the changes under [Unreleased], or release them as a new version: for a weekly refresh, run it again."
+              exit 1
+            fi
+          fi
           if [[ "$GITHUB_EVENT_NAME" != push || "$GITHUB_REF" != refs/heads/main ]]; then
             echo "publish=false" >> $GITHUB_OUTPUT
             exit 0
           fi
-          status=0
-          git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null || status=$?
           case $status in
             0)
               echo "::notice::v$VERSION is already released: building and checking only. Bump the version in pipecat-base/pyproject.toml to publish."
@@ -75,10 +118,6 @@ jobs:
             2)
               echo "::notice::Publishing v$VERSION."
               echo "publish=true" >> $GITHUB_OUTPUT
-              ;;
-            *)
-              echo "::error::Could not check for the tag v$VERSION (git ls-remote exited $status)."
-              exit 1
               ;;
           esac
 
@@ -113,6 +152,7 @@ jobs:
           build-args: |
             VERSION=signal-check
             PYTHON_VERSION=${{ needs.find-images.outputs.default-python }}
+            BASE_IMAGE=${{ fromJson(needs.find-images.outputs.base-images)[needs.find-images.outputs.default-python] }}
 
       - name: Build an agent image on it
         # app.py refuses to start without pipecat-ai, which the base image
@@ -189,6 +229,7 @@ jobs:
           build-args: |
             VERSION=${{ needs.find-images.outputs.base-version }}
             PYTHON_VERSION=${{ matrix.python-version }}
+            BASE_IMAGE=${{ fromJson(needs.find-images.outputs.base-images)[matrix.python-version] }}
 
       - name: Verify the pushed image is multi-arch
         # Regression guard so a single-arch base cannot land again silently.

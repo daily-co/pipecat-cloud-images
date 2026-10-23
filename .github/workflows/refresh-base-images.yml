@@ -1,0 +1,132 @@
+name: Refresh Base Images
+
+# Weekly, and on demand: prepares a release from what upstream has fixed since
+# the last. .github/scripts/refresh_base_images.py moves each Python's pinned
+# upstream image in versions.yaml to what its tag points to now, upgrades the
+# locked packages with a known vulnerability, and takes the latest pip and
+# certifi. When that changes anything, it bumps the patch version and writes
+# the changelog, and this opens a pull request for it, or updates the one
+# already open. Merging it publishes the release through docker-publish.yml.
+on:
+  schedule:
+    # Mondays, 06:00 UTC.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  # Runs the script, and with it whatever PyPI serves that day: uv run resolves
+  # its dependencies, and uvx resolves pip-audit's. So it holds no secret and
+  # can write nothing, and hands its changes on as a patch.
+  refresh:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.refresh.outputs.changed }}
+      title: ${{ steps.refresh.outputs.title }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        # setup-uv publishes no moving major tags since v8, so it is pinned.
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Refresh
+        id: refresh
+        run: |
+          mkdir "$RUNNER_TEMP/refresh"
+          uv run .github/scripts/refresh_base_images.py --body "$RUNNER_TEMP/refresh/body.md"
+          git diff --binary -- versions.yaml pipecat-base/pyproject.toml pipecat-base/uv.lock pipecat-base/CHANGELOG.md > "$RUNNER_TEMP/refresh/changes.patch"
+
+      - if: steps.refresh.outputs.changed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: refresh
+          path: ${{ runner.temp }}/refresh
+          retention-days: 7
+
+  # Holds the refresh app's key, so it runs only actions pinned by commit, and
+  # git. A pull request opened with the workflow's own token runs no
+  # workflows, so its tests and image build would never start: the pull
+  # request is opened as the app instead.
+  open-pull-request:
+    needs: refresh
+    if: needs.refresh.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: refresh
+          path: ${{ runner.temp }}/refresh
+
+      # Only the four files the refresh writes; add-paths below holds the
+      # commit to them as well. --include filters only where a patch writes,
+      # not what it reads: a copy or rename names its source freely, so a patch
+      # could copy any file the runner can read onto one of the four. The
+      # refresh only edits files that exist, so --summary, which lists every
+      # create, delete, rename, copy and mode change, must list nothing.
+      - name: Apply the refresh
+        run: |
+          if [[ -n $(git apply --summary "$RUNNER_TEMP/refresh/changes.patch") ]]; then
+            echo "::error::The patch creates, deletes, renames or copies a file, or changes a mode, which the refresh never does."
+            exit 1
+          fi
+          git apply \
+            --include=versions.yaml \
+            --include=pipecat-base/pyproject.toml \
+            --include=pipecat-base/uv.lock \
+            --include=pipecat-base/CHANGELOG.md \
+            "$RUNNER_TEMP/refresh/changes.patch"
+
+      - name: Get the refresh app's token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.REFRESH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.REFRESH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Open or update the release pull request
+        id: pull-request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          # One branch, so a run while the last pull request is still open
+          # replaces it rather than opening a second release of the same
+          # version.
+          branch: refresh/base-images
+          delete-branch: true
+          add-paths: |
+            versions.yaml
+            pipecat-base/pyproject.toml
+            pipecat-base/uv.lock
+            pipecat-base/CHANGELOG.md
+          commit-message: ${{ needs.refresh.outputs.title }}
+          title: ${{ needs.refresh.outputs.title }}
+          body-path: ${{ runner.temp }}/refresh/body.md
+
+      # Replacing the branch replaces what was approved, and main keeps an
+      # approval across new pushes: dismiss it, so what merges is what was
+      # reviewed.
+      - name: Dismiss approvals of what the branch held before
+        if: steps.pull-request.outputs.pull-request-operation == 'updated'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          NUMBER: ${{ steps.pull-request.outputs.pull-request-number }}
+        run: |
+          for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$NUMBER/reviews" --jq '.[] | select(.state == "APPROVED") | .id'); do
+            gh api --method PUT "repos/$GITHUB_REPOSITORY/pulls/$NUMBER/reviews/$id/dismissals" \
+              -f message="A new refresh replaced this branch; review its changes." -f event=DISMISS > /dev/null
+          done
