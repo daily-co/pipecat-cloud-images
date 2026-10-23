@@ -4,7 +4,7 @@ name: Docker Build and Push
 # which the git tag v<version> records: other merges build and check the image
 # but push nothing, so changes can land over several pull requests and ship
 # together in a release (pipecat-base/README.md). The paths are what goes into
-# the image; nothing else needs a build.
+# the image and what builds it; nothing else needs a build.
 on:
   push:
     branches: ['main']
@@ -15,6 +15,7 @@ on:
       - '!pipecat-base/CHANGELOG.md'
       - 'versions.yaml'
       - '.github/workflows/docker-publish.yml'
+      - '.github/buildkit/Dockerfile'
   pull_request:
     branches: ['main']
     paths: *image-paths
@@ -39,7 +40,7 @@ jobs:
       base-images: ${{ steps.get-versions.outputs.base-images }}
       publish: ${{ steps.release.outputs.publish }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - id: get-versions
         run: |
@@ -181,10 +182,10 @@ jobs:
     needs: find-images
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
         with:
           # The engine's own builder, which reads and writes the local image
           # store: the agent-image step below builds FROM the image this job
@@ -193,7 +194,7 @@ jobs:
           driver: docker
 
       - name: Build (runner arch, loaded locally)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: ./pipecat-base
           # Single-platform and loaded: the checks run the image, and a
@@ -239,18 +240,18 @@ jobs:
         python-version: ${{ fromJson(needs.find-images.outputs.python-versions) }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Log in to Docker Hub
         if: needs.find-images.outputs.publish == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PAT }}
 
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: dailyco/pipecat-base
           tags: |
@@ -259,12 +260,30 @@ jobs:
             type=raw,value=latest,enable=${{ matrix.python-version == needs.find-images.outputs.default-python }}
             type=raw,value=${{ needs.find-images.outputs.base-version }},enable=${{ matrix.python-version == needs.find-images.outputs.default-python }}
 
+      # BuildKit runs the build and does the push, so it holds the Docker Hub
+      # credentials as much as the actions do: pinned like them, rather than
+      # the action's default, a moving tag. The reference lives in a
+      # Dockerfile so that Dependabot keeps it current. An empty image would
+      # send buildx back to that default, so anything but one pinned
+      # reference stops the job.
+      - name: Read the pinned BuildKit image
+        id: buildkit
+        run: |
+          image=$(awk '$1 == "FROM" { print $2 }' .github/buildkit/Dockerfile)
+          if ! [[ $image =~ ^moby/buildkit:v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error file=.github/buildkit/Dockerfile::needs one FROM moby/buildkit:<version>@sha256:<digest> line, found '$image'"
+            exit 1
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          driver-opts: image=${{ steps.buildkit.outputs.image }}
 
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: ./pipecat-base
           # Every customer bot is built FROM this image, so an arm64-only base
