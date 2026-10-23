@@ -65,21 +65,75 @@ jobs:
             fi
           done
 
-          # uv sync --locked installs from wherever the lock says, and trusts a
-          # hash the lock supplies with it, so a lock that points one wheel at
-          # another host still installs. A refresh's lock diff changes dozens
-          # of URLs at once, where one changed host is easy to miss.
-          outside=$(grep -oE '(url|registry|git|path|directory) = "[^"]*"' pipecat-base/uv.lock \
-            | grep -vE '^(url = "https://files\.pythonhosted\.org/|registry = "https://pypi\.org/simple")' || true)
-          if [[ -n $outside ]]; then
-            echo "::error file=pipecat-base/uv.lock::uv.lock installs from outside PyPI: $(head -1 <<< "$outside")"
-            exit 1
-          fi
-
           echo "base-version=$BASE_VERSION" >> $GITHUB_OUTPUT
           echo "python-versions=$PYTHON_VERSIONS" >> $GITHUB_OUTPUT
           echo "default-python=$DEFAULT_PYTHON" >> $GITHUB_OUTPUT
           echo "base-images=$BASE_IMAGES" >> $GITHUB_OUTPUT
+
+      # uv sync --locked installs from wherever the lock says, and trusts a
+      # hash the lock supplies with it, so a lock that points one wheel at
+      # another host still installs. A refresh's lock diff changes dozens of
+      # URLs at once, where one changed host is easy to miss. Parsed rather
+      # than grepped: TOML can spell the same entry many ways, and uv reads
+      # them all. Each file must also be named for its package: anyone can
+      # publish to files.pythonhosted.org, and uv installs a wheel without
+      # checking its name against the entry, while PyPI accepts a file only
+      # under its own project's name.
+      - name: Check uv.lock installs only from PyPI
+        shell: python
+        run: |
+          import re
+          import sys
+          import tomllib
+          from urllib.parse import unquote, urlsplit
+
+          REGISTRY = {"registry": "https://pypi.org/simple"}
+          FILES = "https://files.pythonhosted.org/"
+          # The project itself, which the lock records and the Dockerfile's
+          # --no-install-project skips. Only by its own name: uv builds an
+          # entry of any other name that shares its source, with whatever
+          # build backend pyproject.toml names.
+          PROJECT = "pipecat-base"
+          PROJECT_SOURCES = [{"editable": "."}, {"virtual": "."}]
+
+
+          def canonical(name):
+              return re.sub(r"[-_.]+", "-", name).lower()
+
+
+          def project_of(url):
+              # The filename as uv reads it: the path's last segment, decoded.
+              # A wheel's name never has a "-", and a normalized sdist's
+              # version never does.
+              filename = unquote(urlsplit(url).path.rpartition("/")[2])
+              if filename.endswith(".whl"):
+                  return filename.partition("-")[0]
+              return filename.rpartition("-")[0]
+
+
+          with open("pipecat-base/uv.lock", "rb") as f:
+              lock = tomllib.load(f)
+          outside = []
+          for package in lock["package"]:
+              name, source = package["name"], package.get("source")
+              files = [package["sdist"]] if "sdist" in package else []
+              files += package.get("wheels", [])
+              if name == PROJECT and source in PROJECT_SOURCES and not files:
+                  continue
+              if source != REGISTRY:
+                  outside.append(f"{name} from {source}")
+              outside += [
+                  f"{name} from {f.get('url') or f.get('path') or f}"
+                  for f in files
+                  if not f.get("url", "").startswith(FILES)
+                  or canonical(project_of(f["url"])) != canonical(name)
+              ]
+          if outside:
+              print(
+                  "::error file=pipecat-base/uv.lock::uv.lock installs from outside each "
+                  f"package's own PyPI project: {outside[0]}"
+              )
+              sys.exit(1)
 
       - id: release
         env:
