@@ -65,21 +65,47 @@ jobs:
             fi
           done
 
-          # uv sync --locked installs from wherever the lock says, and trusts a
-          # hash the lock supplies with it, so a lock that points one wheel at
-          # another host still installs. A refresh's lock diff changes dozens
-          # of URLs at once, where one changed host is easy to miss.
-          outside=$(grep -oE '(url|registry|git|path|directory) = "[^"]*"' pipecat-base/uv.lock \
-            | grep -vE '^(url = "https://files\.pythonhosted\.org/|registry = "https://pypi\.org/simple")' || true)
-          if [[ -n $outside ]]; then
-            echo "::error file=pipecat-base/uv.lock::uv.lock installs from outside PyPI: $(head -1 <<< "$outside")"
-            exit 1
-          fi
-
           echo "base-version=$BASE_VERSION" >> $GITHUB_OUTPUT
           echo "python-versions=$PYTHON_VERSIONS" >> $GITHUB_OUTPUT
           echo "default-python=$DEFAULT_PYTHON" >> $GITHUB_OUTPUT
           echo "base-images=$BASE_IMAGES" >> $GITHUB_OUTPUT
+
+      # uv sync --locked installs from wherever the lock says, and trusts a
+      # hash the lock supplies with it, so a lock that points one wheel at
+      # another host still installs. A refresh's lock diff changes dozens of
+      # URLs at once, where one changed host is easy to miss. Parsed rather
+      # than grepped: TOML can spell the same entry many ways, and uv reads
+      # them all.
+      - name: Check uv.lock installs only from PyPI
+        shell: python
+        run: |
+          import sys
+          import tomllib
+
+          REGISTRY = {"registry": "https://pypi.org/simple"}
+          # The project itself, which the lock records but nothing downloads.
+          PROJECT = [{"editable": "."}, {"virtual": "."}]
+          FILES = "https://files.pythonhosted.org/"
+
+          with open("pipecat-base/uv.lock", "rb") as f:
+              lock = tomllib.load(f)
+          outside = []
+          for package in lock["package"]:
+              name, source = package["name"], package.get("source")
+              files = [package["sdist"]] if "sdist" in package else []
+              files += package.get("wheels", [])
+              if source in PROJECT and not files:
+                  continue
+              if source != REGISTRY:
+                  outside.append(f"{name} from {source}")
+              outside += [
+                  f"{name} from {f.get('url') or f.get('path') or f}"
+                  for f in files
+                  if not f.get("url", "").startswith(FILES)
+              ]
+          if outside:
+              print(f"::error file=pipecat-base/uv.lock::uv.lock installs from outside PyPI: {outside[0]}")
+              sys.exit(1)
 
       - id: release
         env:
