@@ -209,10 +209,18 @@ jobs:
       # BuildKit runs the build and does the push, so it holds the Docker Hub
       # credentials as much as the actions do: pinned like them, rather than
       # the action's default, a moving tag. The reference lives in a
-      # Dockerfile so that Dependabot keeps it current.
+      # Dockerfile so that Dependabot keeps it current. An empty image would
+      # send buildx back to that default, so anything but one pinned
+      # reference stops the job.
       - name: Read the pinned BuildKit image
         id: buildkit
-        run: echo "image=$(sed -n 's/^FROM //p' .github/buildkit/Dockerfile)" >> "$GITHUB_OUTPUT"
+        run: |
+          image=$(awk '$1 == "FROM" { print $2 }' .github/buildkit/Dockerfile)
+          if ! [[ $image =~ ^moby/buildkit:v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error file=.github/buildkit/Dockerfile::needs one FROM moby/buildkit:<version>@sha256:<digest> line, found '$image'"
+            exit 1
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
