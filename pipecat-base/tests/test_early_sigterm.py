@@ -62,13 +62,16 @@ DEFERRED_HANDLED_RERAISE = textwrap.dedent(
 )
 
 # A bot module that installs its own SIGTERM handler at import time, between
-# install() and defer_to_server(). Prints so the parent can tell whose ran.
+# install() and defer_to_server(). Writes so the parent can tell whose ran:
+# with os.write, because the signal can land while the main thread is still
+# inside READY's flush, and a print() there fails as a reentrant call on
+# stdout's buffer, so CUSTOM never appears.
 IMPORT_TIME_HANDLER = textwrap.dedent(
     f"""
-    import signal, sys, time
+    import os, signal, sys, time
     import pcc_early_sigterm
     pcc_early_sigterm.install()
-    signal.signal(signal.SIGTERM, lambda *a: (print("CUSTOM", flush=True), sys.exit(0)))
+    signal.signal(signal.SIGTERM, lambda *a: (os.write(1, b"CUSTOM\\n"), sys.exit(0)))
     pcc_early_sigterm.defer_to_server(lambda: False)
     print({READY!r}, flush=True)
     time.sleep(30)
