@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-10-23
+
+### Changed
+
+- Update the packages those updates required: yarl 1.22.0 to 1.25.1.
+
+### Security
+
+- Update dependencies to resolve security vulnerabilities: aiohttp 3.14.3 to
+  3.14.4, multidict 6.7.0 to 6.9.1, nltk 3.10.3 to 3.10.4.
+
 ## [0.2.8] - 2026-10-22
 
 ### Security
