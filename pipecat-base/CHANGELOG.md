@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-10-23
+
+### Changed
+
+- Update pip and certifi, which the image keeps at their latest: certifi
+  2026.10.19 to 2026.10.23.
+
 ## [0.2.9] - 2026-10-23
 
 ### Changed
