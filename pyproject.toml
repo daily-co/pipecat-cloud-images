@@ -1,0 +1,9 @@
+# Temporary, and holds nothing: GitHub's dependency graph kept a snapshot of
+# the root uv.lock that c5043bc removed, and goes on raising Dependabot alerts
+# against it. A root uv.lock with no packages gives its uv graph job a root
+# lock to scan again, which should replace that snapshot. Removed once it has.
+[project]
+name = "pipecat-cloud-images"
+version = "0.0.0"
+requires-python = ">=3.10"
+dependencies = []
