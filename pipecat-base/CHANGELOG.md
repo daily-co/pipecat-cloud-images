@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-11-02
+
+### Changed
+
+- Rebuilt on the upstream images' latest builds: uv 0.13.5 to 0.13.6, Debian
+  tzdata 2026c-0+deb13u1 to 2026e-0+deb13u1 (the 3.12, 3.13 and 3.14 images),
+  Python 3.12.15 to 3.12.16, Python 3.13.17 to 3.13.18, Python 3.14.9 to
+  3.14.10.
+
+### Security
+
+- Update dependencies to resolve security vulnerabilities: dnspython 2.8.0 to
+  2.9.0.
+
 ## [0.2.10] - 2026-10-23
 
 ### Changed
