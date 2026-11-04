@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-11-04
+
+### Added
+
+- A deployment can publish each session's whole conversation by setting
+  `PCC_EVAL_CONVERSATIONS=true`, so a call can be judged after it ends. It's off
+  by default, can't override `PCC_EXCLUDE_CONTENT`, and needs pipecat-ai
+  1.13 or later. The conversation is what `EvalConversationObserver` records,
+  tool arguments included, published once at session end as `eval_conversation`
+  records. Its JSON text is cut into parts that share a `conversation_id`; join
+  them in `part` order. One that can't be published sends a single record with
+  `omitted: true`. A session that ends in a crash publishes none.
+
+  Other deployments publish nothing new: function call arguments and results
+  still stay with the bot.
+
 ## [0.2.11] - 2026-11-02
 
 ### Changed

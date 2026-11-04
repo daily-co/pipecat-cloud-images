@@ -6,7 +6,8 @@ This file is loaded via the PIPECAT_SETUP_FILES mechanism in PipelineWorker.
 It attaches the observers Pipecat Cloud reports on to every worker, so a
 session leaves behind its startup timing, the latency of each turn and what
 that latency was spent on, what each service cost and consumed, who was
-speaking and when, the function calls the bot made, and the errors it hit.
+speaking and when, the function calls the bot made, and the errors it hit. A
+deployment that opts in also leaves behind its whole conversation.
 
 Each record is published to the event pipeline by pcc_events.
 
@@ -15,7 +16,9 @@ bot pinned to an older Pipecat reports whatever its version has rather than
 failing to start.
 """
 
+import json
 import time
+import uuid
 from os import environ
 
 import pcc_events
@@ -133,6 +136,70 @@ _CONTENT_FIELDS: dict[str, dict] = {
 # record, and a provider's error can quote the request that failed in full.
 _MAX_CONTENT_CHARS = 2000
 
+# A conversation can pass that limit, so it travels as JSON text cut into parts.
+# json.dumps leaves the text ASCII, and publishing it as a string escapes at most
+# every character, which keeps a part inside the limit.
+_CONVERSATION_PART_CHARS = 4000
+
+# What one session may send while it shuts down: about 2 MB of conversation.
+_MAX_CONVERSATION_PARTS = 500
+
+
+def _conversation_opted_in() -> bool:
+    """Whether this deployment publishes whole conversations.
+
+    A developer opts in with `PCC_EVAL_CONVERSATIONS=true`. It can't override a
+    deployment excluding content: the conversation holds what the transcript does,
+    and a tool's arguments as well.
+    """
+    if _exclude_content:
+        return False
+    return environ.get("PCC_EVAL_CONVERSATIONS", "").strip().lower() == "true"
+
+
+def _conversation_parts(conversation: list[dict]) -> list[str] | None:
+    """The conversation as JSON text in parts, or `None` when it can't travel."""
+    try:
+        text = json.dumps(conversation, allow_nan=False)
+    except (TypeError, ValueError) as e:
+        logger.warning(f"[pcc-observability] Could not serialize the conversation: {e}")
+        return None
+    parts = [
+        text[start : start + _CONVERSATION_PART_CHARS]
+        for start in range(0, len(text), _CONVERSATION_PART_CHARS)
+    ]
+    if len(parts) > _MAX_CONVERSATION_PARTS:
+        logger.warning(f"[pcc-observability] Conversation too long to publish: {len(text)} chars")
+        return None
+    return parts
+
+
+async def _publish_conversation(conversation: list[dict]) -> None:
+    """Publish one worker's conversation, or a record saying it was left out.
+
+    The parts share a `conversation_id`, because each worker in a bot records its
+    own. Joining them in `part` order gives back the JSON text.
+    """
+    if not conversation:
+        return
+    conversation_id = str(uuid.uuid4())
+    parts = _conversation_parts(conversation)
+    if parts is None:
+        await pcc_events.publish_event(
+            "eval_conversation", {"conversation_id": conversation_id, "parts": 0, "omitted": True}
+        )
+        return
+    for index, text in enumerate(parts):
+        await pcc_events.publish_event(
+            "eval_conversation",
+            {
+                "conversation_id": conversation_id,
+                "part": index,
+                "parts": len(parts),
+                "text": text,
+            },
+        )
+
 
 def _published_fields(event_name: str) -> dict:
     """The fields a record of this name publishes for this deployment."""
@@ -171,6 +238,7 @@ async def setup_pipeline_worker(worker):
     await _setup_speaking_observer(worker)
     await _setup_function_call_observer(worker)
     await _setup_error_observer(worker)
+    await _setup_conversation_observer(worker)
 
 
 # Backwards compatibility: Pipecat < 1.3.0 looks for ``setup_pipeline_task``.
@@ -367,5 +435,25 @@ async def _setup_error_observer(worker):
     @observer.event_handler("on_error")
     async def on_error(observer, event):
         await _publish_record("error", event)
+
+    worker.add_observer(observer)
+
+
+async def _setup_conversation_observer(worker):
+    if not _conversation_opted_in():
+        return
+    try:
+        from pipecat.evals.conversation_observer import EvalConversationObserver
+    except ImportError:
+        logger.info(
+            "[pcc-observability] conversation not published: needs pipecat-ai 1.13 or later"
+        )
+        return
+
+    observer = EvalConversationObserver()
+
+    @observer.event_handler("on_conversation_ended")
+    async def on_conversation_ended(observer, message):
+        await _publish_conversation(message.conversation)
 
     worker.add_observer(observer)
