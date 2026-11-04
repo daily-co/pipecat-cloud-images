@@ -16,22 +16,37 @@ bot pinned to an older Pipecat reports whatever its version has rather than
 failing to start.
 """
 
+import hashlib
 import json
 import time
 import uuid
 from os import environ
 
 import pcc_events
+import pcc_structured_logs
 from loguru import logger
 
-# Omit transcripts where the platform excludes content. Only an explicit "false"
-# publishes, so an agent the platform never told either way withholds.
-_exclude_content = environ.get("PCC_EXCLUDE_CONTENT", "").strip().lower() != "false"
+
+def _content_excluded() -> bool:
+    """Whether this deployment keeps conversation content out of what it publishes.
+
+    The platform sets `PCC_EXCLUDE_CONTENT`, and only an explicit "false" publishes,
+    so an agent the platform never told either way withholds. A developer can make
+    that stricter with `PCC_WITHHOLD_CONTENT`, but never looser. Any value but an
+    empty one or "false" withholds, so a mistyped value doesn't publish.
+    """
+    if pcc_structured_logs.platform_exclude_content().strip().lower() != "false":
+        return True
+    return environ.get("PCC_WITHHOLD_CONTENT", "").strip().lower() not in ("", "false")
+
+
+_exclude_content = _content_excluded()
 
 if _exclude_content:
     logger.info(
         "[pcc-observability] transcripts are not published "
-        f"(PCC_EXCLUDE_CONTENT={environ.get('PCC_EXCLUDE_CONTENT')!r})"
+        f"(PCC_EXCLUDE_CONTENT={pcc_structured_logs.platform_exclude_content()!r}, "
+        f"PCC_WITHHOLD_CONTENT={environ.get('PCC_WITHHOLD_CONTENT')!r})"
     )
 
 
@@ -157,6 +172,25 @@ def _conversation_opted_in() -> bool:
     return environ.get("PCC_EVAL_CONVERSATIONS", "").strip().lower() == "true"
 
 
+# The fields each message publishes, by role (pipecat.evals.conversation). A bot
+# installs its own Pipecat, so a role or field added upstream stays behind until
+# it's named here.
+_CONVERSATION_FIELDS: dict[str, tuple[str, ...]] = {
+    "user": ("role", "content"),
+    "assistant": ("role", "content"),
+    "tool_call": ("role", "name", "arguments", "cancelled"),
+}
+
+
+def _published_conversation(conversation: list[dict]) -> list[dict]:
+    """The messages and fields of a conversation that this image has reviewed."""
+    return [
+        {field: message[field] for field in _CONVERSATION_FIELDS[role] if field in message}
+        for message in conversation
+        if (role := message.get("role")) in _CONVERSATION_FIELDS
+    ]
+
+
 def _conversation_parts(conversation: list[dict]) -> list[str] | None:
     """The conversation as JSON text in parts, or `None` when it can't travel."""
     try:
@@ -178,8 +212,11 @@ async def _publish_conversation(conversation: list[dict]) -> None:
     """Publish one worker's conversation, or a record saying it was left out.
 
     The parts share a `conversation_id`, because each worker in a bot records its
-    own. Joining them in `part` order gives back the JSON text.
+    own. The pipeline can deliver a part twice or lose one, so each also carries
+    the `sha256` of the whole text. A reader keeps one copy of each `part`, joins
+    them in order, and trusts the result only if the hash matches.
     """
+    conversation = _published_conversation(conversation)
     if not conversation:
         return
     conversation_id = str(uuid.uuid4())
@@ -189,6 +226,7 @@ async def _publish_conversation(conversation: list[dict]) -> None:
             "eval_conversation", {"conversation_id": conversation_id, "parts": 0, "omitted": True}
         )
         return
+    digest = hashlib.sha256("".join(parts).encode()).hexdigest()
     for index, text in enumerate(parts):
         await pcc_events.publish_event(
             "eval_conversation",
@@ -196,6 +234,7 @@ async def _publish_conversation(conversation: list[dict]) -> None:
                 "conversation_id": conversation_id,
                 "part": index,
                 "parts": len(parts),
+                "sha256": digest,
                 "text": text,
             },
         )
@@ -268,10 +307,9 @@ def _every_processor(processor):
 async def _setup_transcripts(worker):
     """Publish what was said, from the aggregators that assemble it.
 
-    The transcript is the one record that carries the conversation itself,
-    rather than facts about it. Everything else here names a service, a
-    duration or a kind; this names what a person said, so a deployment the
-    platform marks `PCC_EXCLUDE_CONTENT` gets every record except this one.
+    The transcript carries the conversation itself, rather than facts about it.
+    Most records here name a service, a duration or a kind; this names what a
+    person said, so a deployment excluding content doesn't publish it.
 
     The text arrives from the aggregators rather than from a frame, because
     they hold the turn: the words a turn ended up with, after the corrections
@@ -413,8 +451,8 @@ async def _setup_function_call_observer(worker):
         return
 
     # A call's arguments and result carry whatever the conversation was about,
-    # so neither travels: what a bot's tools were asked and answered belongs to
-    # the bot, not to the platform running it.
+    # so neither travels here: what a bot's tools were asked and answered belongs
+    # to the bot, unless its developer opts in to publishing whole conversations.
     observer = FunctionCallObserver(include_arguments=False, include_results=False)
 
     @observer.event_handler("on_function_call_event")

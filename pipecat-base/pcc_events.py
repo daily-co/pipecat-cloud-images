@@ -32,8 +32,10 @@ _http_session: aiohttp.ClientSession | None = None
 # without restarting the pod.
 _MAX_CONSECUTIVE_FAILURES = 10
 
-_consecutive_failures = 0
-_counting_for_session: str | None = None
+# Failures in a row, by session: a websocket pod can start its next session while
+# the last one is still publishing. Only the latest few sessions are remembered.
+_MAX_COUNTED_SESSIONS = 8
+_consecutive_failures: dict[str, int] = {}
 
 
 def _get_http_session() -> aiohttp.ClientSession:
@@ -53,14 +55,13 @@ def _get_http_session() -> aiohttp.ClientSession:
     return _http_session
 
 
-def _record_publish_result(succeeded: bool):
-    """Count failures in a row, and say once when a session gives up."""
-    global _consecutive_failures
+def _record_publish_result(session_id: str, succeeded: bool):
+    """Count a session's failures in a row, and say once when it gives up."""
     if succeeded:
-        _consecutive_failures = 0
+        _consecutive_failures[session_id] = 0
         return
-    _consecutive_failures += 1
-    if _consecutive_failures == _MAX_CONSECUTIVE_FAILURES:
+    _consecutive_failures[session_id] = _consecutive_failures.get(session_id, 0) + 1
+    if _consecutive_failures[session_id] == _MAX_CONSECUTIVE_FAILURES:
         logger.warning(
             f"[pcc-observability] {_MAX_CONSECUTIVE_FAILURES} publishes failed in a row;"
             " not publishing again this session"
@@ -80,11 +81,11 @@ async def publish_event(event_name: str, event_properties: dict | None = None):
     if not session_id:
         return
 
-    global _consecutive_failures, _counting_for_session
-    if session_id != _counting_for_session:
-        _counting_for_session = session_id
-        _consecutive_failures = 0
-    if _consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+    if session_id not in _consecutive_failures:
+        if len(_consecutive_failures) >= _MAX_COUNTED_SESSIONS:
+            del _consecutive_failures[next(iter(_consecutive_failures))]
+        _consecutive_failures[session_id] = 0
+    if _consecutive_failures[session_id] >= _MAX_CONSECUTIVE_FAILURES:
         return
 
     payload = {
@@ -101,7 +102,7 @@ async def publish_event(event_name: str, event_properties: dict | None = None):
         async with session.post(_events_endpoint, json=payload) as resp:
             if resp.status >= 400:
                 logger.warning(f"[pcc-observability] Event publish failed: {resp.status}")
-            _record_publish_result(resp.status < 400)
+            _record_publish_result(session_id, resp.status < 400)
     except Exception as e:
         logger.warning(f"[pcc-observability] Event publish error: {e}")
-        _record_publish_result(False)
+        _record_publish_result(session_id, False)

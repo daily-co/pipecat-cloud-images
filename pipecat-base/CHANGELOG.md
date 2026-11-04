@@ -11,17 +11,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- A deployment can publish each session's whole conversation by setting
+- A deployment can publish each session's conversation by setting
   `PCC_EVAL_CONVERSATIONS=true`, so a call can be judged after it ends. It's off
-  by default, can't override `PCC_EXCLUDE_CONTENT`, and needs pipecat-ai
-  1.13 or later. The conversation is what `EvalConversationObserver` records,
-  tool arguments included, published once at session end as `eval_conversation`
-  records. Its JSON text is cut into parts that share a `conversation_id`; join
-  them in `part` order. One that can't be published sends a single record with
-  `omitted: true`. A session that ends in a crash publishes none.
+  by default, can't override `PCC_EXCLUDE_CONTENT`, and needs pipecat-ai 1.13 or
+  later. Each worker that heard something publishes what its
+  `EvalConversationObserver` recorded, tool arguments included, when its pipeline
+  finishes, as `eval_conversation` records. A session whose process is killed,
+  by a crash or a forced stop, publishes none.
+
+  The conversation's JSON text is cut into parts that share a `conversation_id`
+  and the `sha256` of the whole text. A part can arrive twice or not at all, so
+  keep one copy of each `part`, join them in order, and trust the result only if
+  the hash matches. A conversation that can't be published sends a single record
+  with `omitted: true`.
 
   Other deployments publish nothing new: function call arguments and results
   still stay with the bot.
+
+- A deployment can keep conversation content out of what it publishes by setting
+  `PCC_WITHHOLD_CONTENT=true`: transcripts, error messages and the conversation
+  above. Any value but an empty one or `false` withholds. It can only make
+  `PCC_EXCLUDE_CONTENT` stricter, never looser, and doesn't change the bot's logs.
+
+### Fixed
+
+- A record now names the session that produced it when a websocket pod starts
+  its next session while the last one is finishing. Those records could carry
+  the newer session's id, and the older session ending could stop the newer one
+  publishing.
+
+- `PCC_EXCLUDE_CONTENT` is read before the bot is imported, so a bot calling
+  `load_dotenv(override=True)` can't change it.
 
 ## [0.2.11] - 2026-11-02
 

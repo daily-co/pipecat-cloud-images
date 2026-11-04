@@ -171,8 +171,7 @@ def _always_fails(monkeypatch, session_id="session-abc"):
     monkeypatch.setattr(pcc_events, "_get_http_session", lambda: _Broken())
     monkeypatch.setattr(pcc_events, "_events_endpoint", "http://publisher:3000/events")
     monkeypatch.setattr(pcc_structured_logs, "_current_session_id", session_id)
-    monkeypatch.setattr(pcc_events, "_consecutive_failures", 0)
-    monkeypatch.setattr(pcc_events, "_counting_for_session", session_id)
+    monkeypatch.setattr(pcc_events, "_consecutive_failures", {})
     return attempts
 
 
@@ -189,13 +188,14 @@ def test_a_session_stops_publishing_once_it_has_failed_enough(monkeypatch):
 def test_a_publish_that_works_clears_the_count(monkeypatch, posted):
     """Failures have to be consecutive to stop a session trying."""
     monkeypatch.setattr(
-        pcc_events, "_consecutive_failures", pcc_events._MAX_CONSECUTIVE_FAILURES - 1
+        pcc_events,
+        "_consecutive_failures",
+        {"session-abc": pcc_events._MAX_CONSECUTIVE_FAILURES - 1},
     )
-    monkeypatch.setattr(pcc_events, "_counting_for_session", "session-abc")
 
     asyncio.run(pcc_events.publish_event("error", {"category": "connectivity"}))
 
-    assert pcc_events._consecutive_failures == 0
+    assert pcc_events._consecutive_failures == {"session-abc": 0}
 
 
 def test_the_next_session_tries_again(monkeypatch):
@@ -209,6 +209,28 @@ def test_the_next_session_tries_again(monkeypatch):
     asyncio.run(pcc_events.publish_event("error", {"category": "connectivity"}))
 
     assert len(attempts) == gave_up_at + 1
+
+
+def test_overlapping_sessions_each_keep_their_own_failure_count(monkeypatch):
+    """Records alternating between two sessions must not keep resetting the count."""
+    attempts = _always_fails(monkeypatch)
+
+    for _ in range(pcc_events._MAX_CONSECUTIVE_FAILURES + 20):
+        for session_id in ("session-abc", "session-def"):
+            monkeypatch.setattr(pcc_structured_logs, "_current_session_id", session_id)
+            asyncio.run(pcc_events.publish_event("error", {"category": "connectivity"}))
+
+    assert len(attempts) == 2 * pcc_events._MAX_CONSECUTIVE_FAILURES
+
+
+def test_failure_counts_stay_bounded_on_a_long_lived_pod(monkeypatch):
+    _always_fails(monkeypatch)
+
+    for index in range(pcc_events._MAX_COUNTED_SESSIONS + 20):
+        monkeypatch.setattr(pcc_structured_logs, "_current_session_id", f"session-{index}")
+        asyncio.run(pcc_events.publish_event("error", {"category": "connectivity"}))
+
+    assert len(pcc_events._consecutive_failures) == pcc_events._MAX_COUNTED_SESSIONS
 
 
 def test_publishing_is_off_when_no_endpoint_is_configured(monkeypatch):

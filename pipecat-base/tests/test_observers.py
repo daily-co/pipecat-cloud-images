@@ -5,9 +5,13 @@ well as to each worker, and warns about a file without the hook it looks for.
 """
 
 import asyncio
+import hashlib
 import importlib.util
 import json
+import os
+import subprocess
 import sys
+from pathlib import Path
 
 import pcc_events
 import pcc_observers
@@ -53,7 +57,7 @@ class _Worker:
         self.observers.append(observer)
 
 
-# What the publisher allows a record's properties, in event-publisher's own terms.
+# What the publisher allows a record's properties, in the publisher's own terms.
 MAX_EVENT_PROPERTIES_LENGTH = 10240
 
 _needs_conversation_observer = pytest.mark.skipif(
@@ -115,6 +119,92 @@ def _conversations(records):
         assert [part["part"] for part in parts] == list(range(parts[0]["parts"]))
         conversations.append(json.loads("".join(part["text"] for part in parts)))
     return conversations
+
+
+@pytest.mark.parametrize(
+    ("platform", "developer", "excluded"),
+    [
+        ("false", None, False),
+        ("false", "", False),
+        ("false", "false", False),
+        ("false", " False ", False),
+        ("false", "true", True),
+        ("false", " TRUE ", True),
+        ("false", "1", True),
+        ("false", "yes", True),
+        ("true", None, True),
+        ("true", "false", True),
+        ("", None, True),
+        ("", "false", True),
+    ],
+)
+def test_a_developer_can_only_make_excluding_content_stricter(
+    monkeypatch, platform, developer, excluded
+):
+    monkeypatch.setattr(pcc_structured_logs, "_platform_exclude_content", platform)
+    if developer is None:
+        monkeypatch.delenv("PCC_WITHHOLD_CONTENT", raising=False)
+    else:
+        monkeypatch.setenv("PCC_WITHHOLD_CONTENT", developer)
+
+    assert pcc_observers._content_excluded() is excluded
+
+
+def test_a_bots_dotenv_cannot_loosen_the_platforms_setting():
+    code = (
+        "import os, pcc_structured_logs;"
+        "os.environ['PCC_EXCLUDE_CONTENT'] = 'false';"
+        "import pcc_observers;"
+        "print(pcc_observers._exclude_content, pcc_observers._conversation_opted_in())"
+    )
+    base = Path(pcc_observers.__file__).parent
+    env = {**os.environ, "PCC_EXCLUDE_CONTENT": "true", "PCC_EVAL_CONVERSATIONS": "true"}
+    env.pop("PCC_WITHHOLD_CONTENT", None)
+
+    result = subprocess.run(
+        [sys.executable, "-c", code], cwd=base, env=env, capture_output=True, text=True
+    )
+
+    assert result.stdout.split()[-2:] == ["True", "False"], result.stderr
+
+
+def test_the_platforms_setting_is_read_before_the_bot_is_imported():
+    source = (Path(pcc_observers.__file__).parent / "app.py").read_text()
+
+    assert source.index("import pcc_structured_logs") < source.index("import bot as bot_module")
+
+
+def test_a_record_names_its_own_session_when_sessions_overlap(published):
+    async def run():
+        b_started = asyncio.Event()
+        a_finished = asyncio.Event()
+
+        async def session_a():
+            with pcc_structured_logs.session_scope("session-a"):
+                await pcc_events.publish_event("before", {"n": 1})
+                await b_started.wait()
+                await pcc_events.publish_event("during", {"n": 2})
+            a_finished.set()
+
+        async def session_b():
+            with pcc_structured_logs.session_scope("session-b"):
+                b_started.set()
+                await a_finished.wait()
+                # Past the linger, in case the older session's exit cleared the slot.
+                await asyncio.sleep(pcc_structured_logs._SESSION_LINGER_SECONDS + 0.1)
+                await pcc_events.publish_event("after", {"n": 3})
+                assert pcc_structured_logs.current_session() == "session-b"
+                assert pcc_structured_logs._current_session_id == "session-b"
+
+        await asyncio.gather(session_a(), session_b())
+
+    asyncio.run(run())
+
+    assert [(record["event_name"], record["session_id"]) for record in published] == [
+        ("before", "session-a"),
+        ("during", "session-a"),
+        ("after", "session-b"),
+    ]
 
 
 @_needs_conversation_observer
@@ -198,6 +288,9 @@ def test_an_older_pipecat_opted_in_still_starts(published, monkeypatch):
         "plain words " * 5000,
         '"quotes" and \\backslashes\\ ' * 5000,
         "日本語のテキストです。" * 5000,
+        # The worst case: every character escaped again when a part is published.
+        '"' * 20000,
+        "\\" * 20000,
     ],
 )
 def test_a_long_conversation_fits_the_publishers_limit_and_comes_back_whole(published, said):
@@ -214,6 +307,55 @@ def test_a_long_conversation_fits_the_publishers_limit_and_comes_back_whole(publ
         length = len(json.dumps(record["event_properties"], ensure_ascii=False))
         assert length <= MAX_EVENT_PROPERTIES_LENGTH
     assert _conversations(published) == [conversation]
+
+
+def test_a_reader_can_survive_a_duplicate_part_and_detect_a_missing_one(published):
+    conversation = [{"role": "user", "content": "words " * 5000}]
+
+    asyncio.run(pcc_observers._publish_conversation(conversation))
+
+    records = [record["event_properties"] for record in published]
+    assert len(records) > 2
+    assert len({record["sha256"] for record in records}) == 1
+
+    def read(delivered):
+        by_part = {record["part"]: record["text"] for record in delivered}
+        text = "".join(by_part[part] for part in sorted(by_part))
+        return text if hashlib.sha256(text.encode()).hexdigest() == records[0]["sha256"] else None
+
+    assert json.loads(read(records + records[:1])) == conversation
+    assert read(records[1:]) is None
+
+
+def test_only_the_roles_and_fields_named_here_are_published(published):
+    conversation = [
+        {"role": "user", "content": "Hi", "timestamp": "2026-11-04T12:00:00+00:00"},
+        {"role": "tool_result", "name": "note", "content": "a result"},
+        {
+            "role": "tool_call",
+            "name": "note",
+            "arguments": {"text": "Hi"},
+            "cancelled": False,
+            "result": {"saved": True},
+        },
+        {"role": "assistant", "content": "Done", "audio_url": "https://example.com/a.wav"},
+    ]
+
+    asyncio.run(pcc_observers._publish_conversation(conversation))
+
+    assert _conversations(published) == [
+        [
+            {"role": "user", "content": "Hi"},
+            {"role": "tool_call", "name": "note", "arguments": {"text": "Hi"}, "cancelled": False},
+            {"role": "assistant", "content": "Done"},
+        ]
+    ]
+
+
+def test_a_conversation_of_only_unknown_roles_publishes_nothing(published):
+    asyncio.run(pcc_observers._publish_conversation([{"role": "system", "content": "Be nice"}]))
+
+    assert published == []
 
 
 def test_each_workers_conversation_stays_apart(published):

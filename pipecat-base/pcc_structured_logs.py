@@ -24,8 +24,7 @@ like namespace/service/deployment):
     level       loguru level name (app lane only; raw streams have no level)
     session_id  active session (omitted when none) — app-lane lines carry the
                 loguru context value; captured lines are stamped with the
-                module-level current session, which is exact because session
-                concurrency is strictly 1 today
+                module-level current session, the latest to start on the pod
     line        the log line body
 
 Recursion safety: a captured line is re-emitted through loguru, so no loguru
@@ -48,6 +47,7 @@ import os
 import sys
 import threading
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from os import environ
 
@@ -64,15 +64,22 @@ _RETENTION = 1  # rotated files to keep
 _log_dir = environ.get("PCC_LOG_DIR")
 _installed = False
 _console_stream = None  # TextIO on the saved real stderr, once installed
-_current_session_id = None  # set by run_bot; exact under enforced concurrency-1
+_current_session_id = None  # set by run_bot; the latest session to start on this pod
 _clear_timer = None
+
+# The session the running code belongs to. A websocket pod can take its next
+# session while the last one is still finishing, so the slot above can name either.
+_session_context: ContextVar[str | None] = ContextVar("pcc_session", default=None)
+
+# What the platform set, read as this module loads. app.py imports it before the
+# customer's bot, so a bot calling load_dotenv(override=True) can't loosen it.
+_platform_exclude_content = environ.get("PCC_EXCLUDE_CONTENT", "")
 
 # How long the session slot lingers after a session ends. The pump threads
 # emit captured lines asynchronously, so output written in a session's final
 # instants (a crashing bot's last words — the case that matters most) is still
 # in the pipe when the session exits; an immediate clear would strip its
-# attribution. A new session cancels the linger and takes over immediately,
-# so attribution can never bleed into the NEXT session.
+# attribution. A new session cancels the linger and takes over immediately.
 _SESSION_LINGER_SECONDS = 0.25
 
 
@@ -82,11 +89,11 @@ def enabled() -> bool:
 
 
 def set_current_session(session_id):
-    """Record the session owning the pod right now (None to clear).
+    """Record the latest session to start on this pod (None to clear).
 
-    Captured stdout/stderr lines are attributed to this session. Session
-    concurrency is strictly enforced at 1, so a single slot is exact; this
-    must be revisited if concurrency ever becomes configurable.
+    Captured stdout/stderr lines are attributed to this session. They arrive with
+    no context to say otherwise, so while one session finishes and the next starts
+    they go to the next.
 
     Clearing is deferred by a short linger (see _SESSION_LINGER_SECONDS) so
     in-flight captured output keeps its attribution; setting is immediate.
@@ -110,26 +117,35 @@ def set_current_session(session_id):
 
 
 def current_session():
-    """The session owning the pod right now, or None between sessions.
+    """The session a line or a record belongs to, or None between sessions.
 
-    The slot `set_current_session` keeps, for anything that needs to name the
-    session a line or a record belongs to.
+    Code running for a session names that session, even once a newer one has
+    started on the pod. Anything else gets the slot `set_current_session` keeps.
     """
-    return _current_session_id
+    return _session_context.get() or _current_session_id
+
+
+def platform_exclude_content():
+    """What the platform set `PCC_EXCLUDE_CONTENT` to when this process started."""
+    return _platform_exclude_content
 
 
 @contextmanager
 def session_scope(session_id):
-    """Attribute captured stdout/stderr to *session_id* for the block's span.
+    """Attribute output and records to *session_id* for the block's span.
 
     Stack this alongside ``logger.contextualize`` in run_bot; the finally
-    guarantees the slot clears on every exit path (including early returns).
+    guarantees the slot clears on every exit path (including early returns),
+    unless a newer session has taken it.
     """
+    token = _session_context.set(session_id)
     set_current_session(session_id)
     try:
         yield
     finally:
-        set_current_session(None)
+        if _current_session_id == session_id:
+            set_current_session(None)
+        _session_context.reset(token)
 
 
 def console_stream():
