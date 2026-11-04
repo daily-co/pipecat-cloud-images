@@ -7,6 +7,9 @@ It attaches the observers Pipecat Cloud reports on to every worker, so a
 session leaves behind its startup timing, the latency of each turn and what
 that latency was spent on, what each service cost and consumed, who was
 speaking and when, the function calls the bot made, and the errors it hit.
+Where the transcript is published, it also leaves the whole conversation, in
+the form Pipecat's evals judge, so a production call can be judged the way a
+simulated one is.
 
 Each record is published to the event pipeline by pcc_events.
 
@@ -15,6 +18,7 @@ bot pinned to an older Pipecat reports whatever its version has rather than
 failing to start.
 """
 
+import json
 import time
 from os import environ
 
@@ -133,6 +137,23 @@ _CONTENT_FIELDS: dict[str, dict] = {
 # record, and a provider's error can quote the request that failed in full.
 _MAX_CONTENT_CHARS = 2000
 
+# The publisher's limit on a record's properties (pipecat-cloud-sandbox
+# event-publisher, types.ts), checked against the JSON the record is posted as.
+# A conversation is published whole or not at all, since a judge reading part
+# of one would judge a call that never happened; one past this is published as
+# its size alone, so the session still says it had one.
+_MAX_CONVERSATION_CHARS = 10240
+
+# The fields of each message in a conversation, by role, as Pipecat's
+# conversation file holds them (pipecat.evals.conversation). A message of a
+# role not named here stays behind, so a role added upstream, such as one for
+# a tool's result, waits for someone to decide it should travel.
+_CONVERSATION_FIELDS: dict[str, tuple[str, ...]] = {
+    "user": ("role", "content"),
+    "assistant": ("role", "content"),
+    "tool_call": ("role", "name", "arguments", "cancelled"),
+}
+
 
 def _published_fields(event_name: str) -> dict:
     """The fields a record of this name publishes for this deployment."""
@@ -165,6 +186,7 @@ async def _publish_record(event_name: str, record):
 async def setup_pipeline_worker(worker):
     """Called by PipelineWorker._load_setup_files() for each worker instance."""
     await _setup_transcripts(worker)
+    await _setup_conversation_observer(worker)
     await _setup_startup_timing_observer(worker)
     await _setup_user_bot_latency_observer(worker)
     await _setup_service_metrics_observer(worker)
@@ -254,6 +276,65 @@ async def _setup_transcripts(worker):
                         "timestamp": time.time(),
                     },
                 )
+
+
+def _conversation_record(messages: list[dict]) -> dict | None:
+    """The `conversation` record's properties, or None when there is nothing to send.
+
+    A worker that held no conversation, such as one of several in a bot that
+    keeps its context in another, has no messages, and sends nothing.
+    """
+    kept = [
+        {field: message[field] for field in _CONVERSATION_FIELDS[role] if field in message}
+        for message in messages
+        if (role := message.get("role")) in _CONVERSATION_FIELDS
+    ]
+    if not kept:
+        return None
+
+    record = {"message_count": len(kept), "messages": kept}
+    try:
+        length = len(json.dumps(record))
+    except (TypeError, ValueError) as e:
+        logger.warning(f"[pcc-observability] Could not serialize conversation: {e}")
+        return None
+    if length > _MAX_CONVERSATION_CHARS:
+        logger.warning(
+            f"[pcc-observability] conversation is {length} characters, past the "
+            f"publisher's {_MAX_CONVERSATION_CHARS}; publishing its size only"
+        )
+        return {"message_count": len(kept), "omitted": "too_large", "length": length}
+    return record
+
+
+async def _setup_conversation_observer(worker):
+    """Publish the whole conversation once the pipeline is done.
+
+    The transcript is published a turn at a time, for reading; this is the
+    conversation as Pipecat's evals judge it (`pipecat eval judge`), with each
+    tool call in place and its arguments, which no other record carries. It
+    quotes the conversation, so it travels only where the transcript does.
+
+    It is reported from the observer's cleanup, so a session that ends
+    abruptly, such as a crash or an out-of-memory kill, leaves none.
+    """
+    if _exclude_content:
+        return
+
+    try:
+        from pipecat.evals.conversation_observer import EvalConversationObserver
+    except ImportError:
+        return
+
+    observer = EvalConversationObserver()
+
+    @observer.event_handler("on_conversation_ended")
+    async def on_conversation_ended(observer, message):
+        record = _conversation_record(message.conversation)
+        if record is not None:
+            await pcc_events.publish_event("conversation", record)
+
+    worker.add_observer(observer)
 
 
 async def _setup_startup_timing_observer(worker):

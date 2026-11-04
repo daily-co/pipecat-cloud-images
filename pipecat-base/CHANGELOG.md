@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A session publishes its whole conversation as one `conversation` record when
+  its pipeline is done, from pipecat-ai 1.13.0's `EvalConversationObserver`:
+  the user's and the bot's turns in order, with each tool call in place, its
+  name and arguments, and whether it was cancelled. This is the form Pipecat's
+  evals judge (`pipecat eval judge`), so a production call can be judged
+  against the same `success:` and `metrics:` as a simulated one. It quotes the
+  conversation, so it travels only where the transcript does, under the same
+  `PCC_EXCLUDE_CONTENT` switch; tool arguments travel in no other record. A
+  conversation is published whole or not at all: one past the publisher's
+  10 KB limit on a record is published as its message count and length alone.
+  A session that ends abruptly, such as one killed for running out of memory,
+  publishes none, and a worker that held no conversation publishes nothing.
+  A bot on an older pipecat-ai publishes no `conversation` record.
+
 ## [0.2.11] - 2026-11-02
 
 ### Changed
