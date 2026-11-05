@@ -16,6 +16,7 @@ bot pinned to an older Pipecat reports whatever its version has rather than
 failing to start.
 """
 
+import asyncio
 import hashlib
 import json
 import time
@@ -153,11 +154,19 @@ _MAX_CONTENT_CHARS = 2000
 
 # A conversation can pass that limit, so it travels as JSON text cut into parts.
 # json.dumps leaves the text ASCII, and publishing it as a string escapes at most
-# every character, which keeps a part inside the limit.
+# every character, which keeps a part inside the limit. That relies on the path to
+# the publisher leaving `<`, `>` and `&` alone, as JSON encoders do unless they
+# escape for HTML, as Go's does by default.
 _CONVERSATION_PART_CHARS = 4000
 
 # What one session may send while it shuts down: about 2 MB of conversation.
 _MAX_CONVERSATION_PARTS = 500
+
+# A session can't end until its conversation is published, so this is the longest
+# publishing can hold one up. Even the longest conversation normally takes a
+# fraction of a second. An endpoint that is merely slow never reaches the failure
+# cutoff in pcc_events, because each success restarts its count.
+_CONVERSATION_PUBLISH_SECS = 10
 
 
 def _conversation_opted_in() -> bool:
@@ -191,52 +200,69 @@ def _published_conversation(conversation: list[dict]) -> list[dict]:
     ]
 
 
-def _conversation_parts(conversation: list[dict]) -> list[str] | None:
-    """The conversation as JSON text in parts, or `None` when it can't travel."""
+def _conversation_text(conversation: list[dict]) -> str | None:
+    """The conversation as JSON text, or `None` when it can't travel."""
     try:
         text = json.dumps(conversation, allow_nan=False)
     except (TypeError, ValueError) as e:
         logger.warning(f"[pcc-observability] Could not serialize the conversation: {e}")
         return None
-    parts = [
-        text[start : start + _CONVERSATION_PART_CHARS]
-        for start in range(0, len(text), _CONVERSATION_PART_CHARS)
-    ]
-    if len(parts) > _MAX_CONVERSATION_PARTS:
+    if len(text) > _MAX_CONVERSATION_PARTS * _CONVERSATION_PART_CHARS:
         logger.warning(f"[pcc-observability] Conversation too long to publish: {len(text)} chars")
         return None
-    return parts
+    return text
 
 
 async def _publish_conversation(conversation: list[dict]) -> None:
     """Publish one worker's conversation, or a record saying it was left out.
 
     The parts share a `conversation_id`, because each worker in a bot records its
-    own. The pipeline can deliver a part twice or lose one, so each also carries
-    the `sha256` of the whole text. A reader keeps one copy of each `part`, joins
-    them in order, and trusts the result only if the hash matches.
+    own. The pipeline can deliver a part twice or lose one, and publishing gives up
+    at `_CONVERSATION_PUBLISH_SECS`, so each also carries the `sha256` of the whole
+    text. A reader keeps one copy of each `part`, joins them in order, and trusts
+    the result only if the hash matches.
     """
     conversation = _published_conversation(conversation)
     if not conversation:
         return
     conversation_id = str(uuid.uuid4())
-    parts = _conversation_parts(conversation)
-    if parts is None:
+    text = _conversation_text(conversation)
+    if text is None:
         await pcc_events.publish_event(
             "eval_conversation", {"conversation_id": conversation_id, "parts": 0, "omitted": True}
         )
         return
-    digest = hashlib.sha256("".join(parts).encode()).hexdigest()
-    for index, text in enumerate(parts):
-        await pcc_events.publish_event(
-            "eval_conversation",
-            {
-                "conversation_id": conversation_id,
-                "part": index,
-                "parts": len(parts),
-                "sha256": digest,
-                "text": text,
-            },
+    digest = hashlib.sha256(text.encode()).hexdigest()
+    parts = [
+        text[start : start + _CONVERSATION_PART_CHARS]
+        for start in range(0, len(text), _CONVERSATION_PART_CHARS)
+    ]
+    # One part at a time, on purpose. The pod's local endpoint answers as soon as a
+    # record is buffered, so even the longest conversation takes a fraction of a
+    # second, and when that endpoint stalls it stalls concurrent posts too.
+    attempted = 0
+    try:
+        async with asyncio.timeout(_CONVERSATION_PUBLISH_SECS) as limit:
+            for index, part in enumerate(parts):
+                # aiohttp's own timeout can use up this one's cancel when both fall due
+                # together, and publish_event then catches it as a failed post.
+                if limit.expired():
+                    raise TimeoutError
+                attempted = index + 1
+                await pcc_events.publish_event(
+                    "eval_conversation",
+                    {
+                        "conversation_id": conversation_id,
+                        "part": index,
+                        "parts": len(parts),
+                        "sha256": digest,
+                        "text": part,
+                    },
+                )
+    except TimeoutError:
+        logger.warning(
+            "[pcc-observability] Stopped publishing the conversation at the"
+            f" {_CONVERSATION_PUBLISH_SECS}s limit: {attempted} of {len(parts)} parts attempted"
         )
 
 
@@ -483,6 +509,8 @@ async def _setup_conversation_observer(worker):
     try:
         from pipecat.evals.conversation_observer import EvalConversationObserver
     except ImportError:
+        # Said for every worker, not once per process: logs are read by session, and
+        # a session on a reused pod needs to say why it has no conversation too.
         logger.info(
             "[pcc-observability] conversation not published: needs pipecat-ai 1.13 or later"
         )

@@ -6,8 +6,8 @@ and is otherwise dropped.
 Records come from two places: app.py, about the session it is starting, and
 pcc_observers, about what the session's pipeline reports. Pipecat loads
 pcc_observers from its path rather than importing it, so the publisher lives
-here, in a module both import, where they share one connection and one count
-of failures.
+here, in a module both import, where they share one connection and each
+session's count of failures.
 """
 
 import uuid
@@ -33,7 +33,8 @@ _http_session: aiohttp.ClientSession | None = None
 _MAX_CONSECUTIVE_FAILURES = 10
 
 # Failures in a row, by session: a websocket pod can start its next session while
-# the last one is still publishing. Only the latest few sessions are remembered.
+# the last one is still publishing. Only the few sessions that published most
+# recently are remembered, the most recent last.
 _MAX_COUNTED_SESSIONS = 8
 _consecutive_failures: dict[str, int] = {}
 
@@ -55,12 +56,28 @@ def _get_http_session() -> aiohttp.ClientSession:
     return _http_session
 
 
+def _failures_so_far(session_id: str) -> int:
+    """A session's failures in a row, noting it as the latest to publish.
+
+    Making room forgets the session that published longest ago, so a session that
+    gave up stays given up for as long as it keeps trying.
+    """
+    failures = _consecutive_failures.pop(session_id, 0)
+    _consecutive_failures[session_id] = failures
+    if len(_consecutive_failures) > _MAX_COUNTED_SESSIONS:
+        del _consecutive_failures[next(iter(_consecutive_failures))]
+    return failures
+
+
 def _record_publish_result(session_id: str, succeeded: bool):
     """Count a session's failures in a row, and say once when it gives up."""
+    # Forgotten while this record was in flight. Adding it back would pass the cap.
+    if session_id not in _consecutive_failures:
+        return
     if succeeded:
         _consecutive_failures[session_id] = 0
         return
-    _consecutive_failures[session_id] = _consecutive_failures.get(session_id, 0) + 1
+    _consecutive_failures[session_id] += 1
     if _consecutive_failures[session_id] == _MAX_CONSECUTIVE_FAILURES:
         logger.warning(
             f"[pcc-observability] {_MAX_CONSECUTIVE_FAILURES} publishes failed in a row;"
@@ -81,11 +98,7 @@ async def publish_event(event_name: str, event_properties: dict | None = None):
     if not session_id:
         return
 
-    if session_id not in _consecutive_failures:
-        if len(_consecutive_failures) >= _MAX_COUNTED_SESSIONS:
-            del _consecutive_failures[next(iter(_consecutive_failures))]
-        _consecutive_failures[session_id] = 0
-    if _consecutive_failures[session_id] >= _MAX_CONSECUTIVE_FAILURES:
+    if _failures_so_far(session_id) >= _MAX_CONSECUTIVE_FAILURES:
         return
 
     payload = {

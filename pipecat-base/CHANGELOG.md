@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the `sha256` of the whole text. A part can arrive twice or not at all, so
   keep one copy of each `part`, join them in order, and trust the result only if
   the hash matches. A conversation that can't be published sends a single record
-  with `omitted: true`.
+  with `omitted: true`. Publishing a conversation stops after 10 seconds, and any
+  parts not sent by then are lost.
 
   Other deployments publish nothing new: function call arguments and results
   still stay with the bot.

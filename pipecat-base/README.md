@@ -114,6 +114,23 @@ before `bot()` returns: `await` it in your event handler, or keep the task and
 await it at the end of `bot()`. Work handed to a background task or thread that
 `bot()` doesn't wait for can be cut off when the pod stops.
 
+Two variables you can set control the conversation content a deployment publishes:
+
+- `PCC_EVAL_CONVERSATIONS=true` publishes each session's whole conversation,
+  tool arguments included, when its pipeline finishes, so a call can be judged
+  after it ends. It needs pipecat-ai 1.13 or later and does nothing unless the
+  platform allows the deployment's content to be published. A bot with several
+  workers publishes one conversation for each. `bot()` doesn't return until this
+  is done, which is normally a fraction of a second. Publishing a conversation
+  stops after 10 seconds, and any parts not sent by then are lost.
+- `PCC_WITHHOLD_CONTENT=true` keeps transcripts, error messages and that
+  conversation out of what the deployment publishes. Any value but an empty one
+  or `false` withholds. It can make the platform's setting stricter, never
+  looser, and doesn't change the bot's logs.
+
+The [changelog](./CHANGELOG.md) for 0.2.12 describes how to read the published
+records.
+
 ## Releasing New Versions
 
 **The `version` in `pipecat-base/pyproject.toml` is what releases the image.**
