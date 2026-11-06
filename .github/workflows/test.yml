@@ -69,6 +69,10 @@ jobs:
           - python-version: ${{ needs.python-versions.outputs.default-python }}
             pipecat: '0.0.91'
             pipecat-spec: pipecat-ai==0.0.91
+          # The first release with the observer behind PCC_EVAL_CONVERSATIONS.
+          - python-version: ${{ needs.python-versions.outputs.default-python }}
+            pipecat: '1.13.0'
+            pipecat-spec: pipecat-ai==1.13.0
           # An agent image may pin its own pipecatcloud. 0.4.4, which the image
           # shipped through 0.1.32, differs from 1.x where the image's checks
           # care: it imports pipecat-ai as it loads, and calls pipecat-ai's

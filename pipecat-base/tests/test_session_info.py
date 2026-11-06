@@ -92,8 +92,7 @@ class _Session:
 def _publish_to(monkeypatch, session):
     monkeypatch.setattr(pcc_events, "_get_http_session", lambda: session)
     monkeypatch.setattr(pcc_events, "_events_endpoint", "http://publisher:3000/events")
-    monkeypatch.setattr(pcc_events, "_consecutive_failures", 0)
-    monkeypatch.setattr(pcc_events, "_counting_for_session", None)
+    monkeypatch.setattr(pcc_events, "_consecutive_failures", {})
 
 
 @pytest.fixture

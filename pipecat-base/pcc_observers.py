@@ -6,7 +6,8 @@ This file is loaded via the PIPECAT_SETUP_FILES mechanism in PipelineWorker.
 It attaches the observers Pipecat Cloud reports on to every worker, so a
 session leaves behind its startup timing, the latency of each turn and what
 that latency was spent on, what each service cost and consumed, who was
-speaking and when, the function calls the bot made, and the errors it hit.
+speaking and when, the function calls the bot made, and the errors it hit. A
+deployment that opts in also leaves behind its whole conversation.
 
 Each record is published to the event pipeline by pcc_events.
 
@@ -15,20 +16,38 @@ bot pinned to an older Pipecat reports whatever its version has rather than
 failing to start.
 """
 
+import asyncio
+import hashlib
+import json
 import time
+import uuid
 from os import environ
 
 import pcc_events
+import pcc_structured_logs
 from loguru import logger
 
-# Omit transcripts where the platform excludes content. Only an explicit "false"
-# publishes, so an agent the platform never told either way withholds.
-_exclude_content = environ.get("PCC_EXCLUDE_CONTENT", "").strip().lower() != "false"
+
+def _content_excluded() -> bool:
+    """Whether this deployment keeps conversation content out of what it publishes.
+
+    The platform sets `PCC_EXCLUDE_CONTENT`, and only an explicit "false" publishes,
+    so an agent the platform never told either way withholds. A developer can make
+    that stricter with `PCC_WITHHOLD_CONTENT`, but never looser. Any value but an
+    empty one or "false" withholds, so a mistyped value doesn't publish.
+    """
+    if pcc_structured_logs.platform_exclude_content().strip().lower() != "false":
+        return True
+    return environ.get("PCC_WITHHOLD_CONTENT", "").strip().lower() not in ("", "false")
+
+
+_exclude_content = _content_excluded()
 
 if _exclude_content:
     logger.info(
         "[pcc-observability] transcripts are not published "
-        f"(PCC_EXCLUDE_CONTENT={environ.get('PCC_EXCLUDE_CONTENT')!r})"
+        f"(PCC_EXCLUDE_CONTENT={pcc_structured_logs.platform_exclude_content()!r}, "
+        f"PCC_WITHHOLD_CONTENT={environ.get('PCC_WITHHOLD_CONTENT')!r})"
     )
 
 
@@ -133,6 +152,130 @@ _CONTENT_FIELDS: dict[str, dict] = {
 # record, and a provider's error can quote the request that failed in full.
 _MAX_CONTENT_CHARS = 2000
 
+# A conversation can pass that limit, so it travels as JSON text cut into parts.
+# json.dumps leaves the text ASCII, and publishing it as a string escapes at most
+# every character, which keeps a part inside the limit. That relies on the path to
+# the publisher leaving `<`, `>` and `&` alone, as JSON encoders do unless they
+# escape for HTML, as Go's does by default.
+_CONVERSATION_PART_CHARS = 4000
+
+# What one session may send while it shuts down: about 2 MB of conversation.
+_MAX_CONVERSATION_PARTS = 500
+
+# A session can't end until its conversation is published, so this is the longest
+# publishing can hold one up. Even the longest conversation normally takes a
+# fraction of a second. An endpoint that is merely slow never reaches the failure
+# cutoff in pcc_events, because each success restarts its count.
+_CONVERSATION_PUBLISH_SECS = 10
+
+# The version of the records' format, sent as `v` on every one. A reader refuses a
+# version it doesn't know, so a new one ships only once readers accept it.
+_CONVERSATION_FORMAT = 1
+
+
+def _conversation_opted_in() -> bool:
+    """Whether this deployment publishes whole conversations.
+
+    A developer opts in with `PCC_EVAL_CONVERSATIONS=true`. It can't override a
+    deployment excluding content: the conversation holds what the transcript does,
+    and a tool's arguments as well.
+    """
+    if _exclude_content:
+        return False
+    return environ.get("PCC_EVAL_CONVERSATIONS", "").strip().lower() == "true"
+
+
+# The fields each message publishes, by role (pipecat.evals.conversation). A bot
+# installs its own Pipecat, so a role or field added upstream stays behind until
+# it's named here.
+_CONVERSATION_FIELDS: dict[str, tuple[str, ...]] = {
+    "user": ("role", "content"),
+    "assistant": ("role", "content"),
+    "tool_call": ("role", "name", "arguments", "cancelled"),
+}
+
+
+def _published_conversation(conversation: list[dict]) -> list[dict]:
+    """The messages and fields of a conversation that this image has reviewed."""
+    return [
+        {field: message[field] for field in _CONVERSATION_FIELDS[role] if field in message}
+        for message in conversation
+        if (role := message.get("role")) in _CONVERSATION_FIELDS
+    ]
+
+
+def _conversation_text(conversation: list[dict]) -> str | None:
+    """The conversation as JSON text, or `None` when it can't travel."""
+    try:
+        text = json.dumps(conversation, allow_nan=False)
+    except (TypeError, ValueError) as e:
+        logger.warning(f"[pcc-observability] Could not serialize the conversation: {e}")
+        return None
+    if len(text) > _MAX_CONVERSATION_PARTS * _CONVERSATION_PART_CHARS:
+        logger.warning(f"[pcc-observability] Conversation too long to publish: {len(text)} chars")
+        return None
+    return text
+
+
+async def _publish_conversation(conversation: list[dict]) -> None:
+    """Publish one worker's conversation, or a record saying it was left out.
+
+    The parts share a `conversation_id`, because each worker in a bot records its
+    own. The pipeline can deliver a part twice or lose one, and publishing gives up
+    at `_CONVERSATION_PUBLISH_SECS`, so each also carries the `sha256` of the whole
+    text. A reader keeps one copy of each `part`, joins them in order, and trusts
+    the result only if the hash matches.
+    """
+    conversation = _published_conversation(conversation)
+    if not conversation:
+        return
+    conversation_id = str(uuid.uuid4())
+    text = _conversation_text(conversation)
+    if text is None:
+        await pcc_events.publish_event(
+            "eval_conversation",
+            {
+                "v": _CONVERSATION_FORMAT,
+                "conversation_id": conversation_id,
+                "parts": 0,
+                "omitted": True,
+            },
+        )
+        return
+    digest = hashlib.sha256(text.encode()).hexdigest()
+    parts = [
+        text[start : start + _CONVERSATION_PART_CHARS]
+        for start in range(0, len(text), _CONVERSATION_PART_CHARS)
+    ]
+    # One part at a time, on purpose. The pod's local endpoint answers as soon as a
+    # record is buffered, so even the longest conversation takes a fraction of a
+    # second, and when that endpoint stalls it stalls concurrent posts too.
+    attempted = 0
+    try:
+        async with asyncio.timeout(_CONVERSATION_PUBLISH_SECS) as limit:
+            for index, part in enumerate(parts):
+                # aiohttp's own timeout can use up this one's cancel when both fall due
+                # together, and publish_event then catches it as a failed post.
+                if limit.expired():
+                    raise TimeoutError
+                attempted = index + 1
+                await pcc_events.publish_event(
+                    "eval_conversation",
+                    {
+                        "v": _CONVERSATION_FORMAT,
+                        "conversation_id": conversation_id,
+                        "part": index,
+                        "parts": len(parts),
+                        "sha256": digest,
+                        "text": part,
+                    },
+                )
+    except TimeoutError:
+        logger.warning(
+            "[pcc-observability] Stopped publishing the conversation at the"
+            f" {_CONVERSATION_PUBLISH_SECS}s limit: {attempted} of {len(parts)} parts attempted"
+        )
+
 
 def _published_fields(event_name: str) -> dict:
     """The fields a record of this name publishes for this deployment."""
@@ -171,6 +314,7 @@ async def setup_pipeline_worker(worker):
     await _setup_speaking_observer(worker)
     await _setup_function_call_observer(worker)
     await _setup_error_observer(worker)
+    await _setup_conversation_observer(worker)
 
 
 # Backwards compatibility: Pipecat < 1.3.0 looks for ``setup_pipeline_task``.
@@ -200,10 +344,9 @@ def _every_processor(processor):
 async def _setup_transcripts(worker):
     """Publish what was said, from the aggregators that assemble it.
 
-    The transcript is the one record that carries the conversation itself,
-    rather than facts about it. Everything else here names a service, a
-    duration or a kind; this names what a person said, so a deployment the
-    platform marks `PCC_EXCLUDE_CONTENT` gets every record except this one.
+    The transcript carries the conversation itself, rather than facts about it.
+    Most records here name a service, a duration or a kind; this names what a
+    person said, so a deployment excluding content doesn't publish it.
 
     The text arrives from the aggregators rather than from a frame, because
     they hold the turn: the words a turn ended up with, after the corrections
@@ -345,8 +488,8 @@ async def _setup_function_call_observer(worker):
         return
 
     # A call's arguments and result carry whatever the conversation was about,
-    # so neither travels: what a bot's tools were asked and answered belongs to
-    # the bot, not to the platform running it.
+    # so neither travels here: what a bot's tools were asked and answered belongs
+    # to the bot, unless its developer opts in to publishing whole conversations.
     observer = FunctionCallObserver(include_arguments=False, include_results=False)
 
     @observer.event_handler("on_function_call_event")
@@ -367,5 +510,27 @@ async def _setup_error_observer(worker):
     @observer.event_handler("on_error")
     async def on_error(observer, event):
         await _publish_record("error", event)
+
+    worker.add_observer(observer)
+
+
+async def _setup_conversation_observer(worker):
+    if not _conversation_opted_in():
+        return
+    try:
+        from pipecat.evals.conversation_observer import EvalConversationObserver
+    except ImportError:
+        # Said for every worker, not once per process: logs are read by session, and
+        # a session on a reused pod needs to say why it has no conversation too.
+        logger.info(
+            "[pcc-observability] conversation not published: needs pipecat-ai 1.13 or later"
+        )
+        return
+
+    observer = EvalConversationObserver()
+
+    @observer.event_handler("on_conversation_ended")
+    async def on_conversation_ended(observer, message):
+        await _publish_conversation(message.conversation)
 
     worker.add_observer(observer)
