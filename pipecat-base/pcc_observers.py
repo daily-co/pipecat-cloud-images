@@ -168,6 +168,10 @@ _MAX_CONVERSATION_PARTS = 500
 # cutoff in pcc_events, because each success restarts its count.
 _CONVERSATION_PUBLISH_SECS = 10
 
+# The version of the records' format, sent as `v` on every one. A reader refuses a
+# version it doesn't know, so a new one ships only once readers accept it.
+_CONVERSATION_FORMAT = 1
+
 
 def _conversation_opted_in() -> bool:
     """Whether this deployment publishes whole conversations.
@@ -229,7 +233,13 @@ async def _publish_conversation(conversation: list[dict]) -> None:
     text = _conversation_text(conversation)
     if text is None:
         await pcc_events.publish_event(
-            "eval_conversation", {"conversation_id": conversation_id, "parts": 0, "omitted": True}
+            "eval_conversation",
+            {
+                "v": _CONVERSATION_FORMAT,
+                "conversation_id": conversation_id,
+                "parts": 0,
+                "omitted": True,
+            },
         )
         return
     digest = hashlib.sha256(text.encode()).hexdigest()
@@ -252,6 +262,7 @@ async def _publish_conversation(conversation: list[dict]) -> None:
                 await pcc_events.publish_event(
                     "eval_conversation",
                     {
+                        "v": _CONVERSATION_FORMAT,
                         "conversation_id": conversation_id,
                         "part": index,
                         "parts": len(parts),

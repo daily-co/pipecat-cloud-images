@@ -113,6 +113,7 @@ def _conversations(records):
     for record in records:
         properties = record["event_properties"]
         assert "text" in properties
+        assert properties["v"] == 1
         texts.setdefault(properties["conversation_id"], []).append(properties)
     conversations = []
     for parts in texts.values():
@@ -426,6 +427,7 @@ def test_a_conversation_that_cannot_travel_says_so(published, arguments):
 
     assert [record["event_properties"]["omitted"] for record in published] == [True]
     assert "text" not in published[0]["event_properties"]
+    assert published[0]["event_properties"]["v"] == 1
 
 
 def test_a_conversation_past_the_part_limit_says_so(published, monkeypatch):

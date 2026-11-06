@@ -19,8 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   finishes, as `eval_conversation` records. A session whose process is killed,
   by a crash or a forced stop, publishes none.
 
-  The conversation's JSON text is cut into parts that share a `conversation_id`
-  and the `sha256` of the whole text. A part can arrive twice or not at all, so
+  The conversation's JSON text is cut into parts, numbered from 0, that share a
+  `conversation_id` and the `sha256` of the whole text. Every record carries the
+  format's version as `v`, 1 for now. A part can arrive twice or not at all, so
   keep one copy of each `part`, join them in order, and trust the result only if
   the hash matches. A conversation that can't be published sends a single record
   with `omitted: true`. Publishing a conversation stops after 10 seconds, and any
