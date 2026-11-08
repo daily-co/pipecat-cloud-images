@@ -14,7 +14,7 @@ RUN python -c "import sys; v = '%d.%d' % sys.version_info[:2]; sys.exit(None if 
 WORKDIR /app
 
 # Install system dependencies. tini is the runtime's PID 1 (see ENTRYPOINT).
-RUN apt update && apt install -y libopenblas-dev libresample1 libresample-dev libgl1 libglib2.0-0 tini && apt clean
+RUN apt update && apt install -y libgl1 libglib2.0-0 tini && apt clean
 
 # Enable bytecode compilation
 ENV UV_COMPILE_BYTECODE=1
@@ -36,9 +36,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 RUN /app/.venv/bin/python -m nltk.downloader punkt_tab -d /usr/local/share/nltk_data && \
     /app/.venv/bin/python -c "import nltk; nltk.data.find('tokenizers/punkt_tab')"
 
-# Set up Krisp symlink in the virtual environment's site-packages
+# Pipecat Cloud mounts the Krisp VIVA SDK at /opt/krisp_viva/krisp_audio for a
+# deployment that enables Krisp's audio filters; this puts it on the virtual
+# environment's import path. Without the mount the path doesn't exist, and
+# Python skips it.
 RUN VENV_SITE_PACKAGES=$(/app/.venv/bin/python -c "import site; print(site.getsitepackages()[0])") && \
-    ln -s /krisp/python/pipecat_ai_krisp ${VENV_SITE_PACKAGES}/pipecat_ai_krisp && \
     echo "/opt/krisp_viva/krisp_audio" > ${VENV_SITE_PACKAGES}/krisp_viva.pth
 
 # Third-party license notice, alongside Debian's per-package copyright files.

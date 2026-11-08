@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking:** removed the legacy Krisp SDK, which Pipecat Cloud no longer
+  supports: `pipecat_ai_krisp` is no longer linked into the virtual
+  environment, and `libopenblas-dev`, `libresample1` and `libresample-dev` are
+  no longer installed. On pipecat-ai older than 1.0, importing `KrispFilter`
+  now fails with `Missing module: No module named 'pipecat_ai_krisp'`, and an
+  agent whose `bot.py` imports it at module level doesn't start. Move to Krisp
+  VIVA (`KrispVivaFilter`), which is unaffected.
+
 ## [0.2.13] - 2026-11-09
 
 ### Changed
