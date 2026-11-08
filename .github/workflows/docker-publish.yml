@@ -177,9 +177,22 @@ jobs:
           esac
 
   container-signal-checks:
-    runs-on: ubuntu-latest
-    name: Container Signal Checks
+    runs-on: ${{ matrix.runner }}
+    name: Container Signal Checks (${{ matrix.arch }})
     needs: find-images
+    # One leg per architecture the image ships for. The signal checks don't
+    # depend on the architecture, but the native-library check does: each
+    # wheel ships its native code per architecture. The wheels it loads link
+    # the same system libraries on every Python minor, so the default Python is
+    # enough; build-base still builds every Python.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -198,10 +211,8 @@ jobs:
         with:
           context: ./pipecat-base
           # Single-platform and loaded: the checks run the image, and a
-          # multi-platform build cannot be loaded into the local daemon. The
-          # PID 1 behaviour under test is independent of the architecture and
-          # of the Python minor, so the runner's arch and the default Python
-          # are enough; build-base still covers the full matrix.
+          # multi-platform build cannot be loaded into the local daemon. Each
+          # leg builds its runner's architecture.
           load: true
           tags: pipecat-base:signal-check
           build-args: |
@@ -212,13 +223,18 @@ jobs:
       - name: Build an agent image on it
         # app.py refuses to start without pipecat-ai, which the base image
         # leaves to the agent image; add it the way the README tells an agent
-        # image to. Pinned so the gate does not move with pipecat-ai releases;
-        # test.yml covers pipecat-ai compatibility. pipecat-ai 1.x needs Python
-        # 3.11 or newer, which default_python in versions.yaml is.
+        # image to. This takes the latest pipecat-ai, as a new agent does;
+        # test.yml covers older releases. pipecat-ai needs Python 3.11 or newer,
+        # which default_python in versions.yaml is. The daily and webrtc extras
+        # bring the native code the native-library check loads.
+        #
+        # Publishing waits on this job, so a pipecat-ai release that fails it
+        # blocks a release here: pin the last release that passes until
+        # pipecat-ai is fixed.
         run: |
           docker build -t pipecat-base:signal-check-agent - <<'EOF'
           FROM pipecat-base:signal-check
-          RUN pip install --no-cache-dir pipecat-ai==1.12.0
+          RUN pip install --no-cache-dir "pipecat-ai[daily,webrtc]"
           EOF
 
       - name: Run container signal checks
@@ -227,6 +243,46 @@ jobs:
         # the container both under tini and with tini bypassed, and that a
         # graceful shutdown still reports exit 0. Stdlib only.
         run: python3 container_signal_check.py pipecat-base:signal-check-agent
+
+      - name: Check native libraries load
+        # A wheel that loads a system library the base image lacks fails only
+        # when an agent imports it. This loads the native code a session uses:
+        # the Daily and SmallWebRTC transports with Daily's client and aiortc,
+        # Silero VAD on onnxruntime, loudness, the audio resamplers pipecat-ai
+        # creates, soundfile, Pillow, and the OpenCV color conversion
+        # SmallWebRTC applies to video frames.
+        run: |
+          docker run --rm -i --entrypoint python pipecat-base:signal-check-agent - <<'EOF'
+          import asyncio
+          import io
+
+          import cv2
+          import numpy as np
+          import soundfile
+          from daily import Daily
+          from PIL import Image
+          from pipecat.audio.utils import (
+              calculate_audio_volume,
+              create_file_resampler,
+              create_stream_resampler,
+          )
+          from pipecat.audio.vad.silero import SileroVADAnalyzer
+          from pipecat.transports.daily.transport import DailyTransport  # noqa: F401
+          from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport  # noqa: F401
+
+          Daily.init()
+          SileroVADAnalyzer()
+          audio = np.zeros(16000, np.int16)  # a second of 16 kHz audio
+          calculate_audio_volume(audio.tobytes(), 16000)
+          for resampler in (create_file_resampler(), create_stream_resampler()):
+              asyncio.run(resampler.resample(audio.tobytes(), 16000, 24000))
+          soundfile.write(io.BytesIO(), audio, 16000, format="WAV")
+          Image.new("RGB", (640, 480)).tobytes()
+          yuv = np.zeros((720, 640), np.uint8)  # a 640x480 I420 frame
+          rgb = cv2.cvtColor(yuv, cv2.COLOR_YUV2RGB_I420)
+          assert rgb.shape == (480, 640, 3), rgb.shape
+          print("native libraries load")
+          EOF
 
   build-base:
     runs-on: ubuntu-24.04-arm
