@@ -14,7 +14,12 @@ RUN python -c "import sys; v = '%d.%d' % sys.version_info[:2]; sys.exit(None if 
 WORKDIR /app
 
 # Install system dependencies. tini is the runtime's PID 1 (see ENTRYPOINT).
-RUN apt update && apt install -y libgl1 libglib2.0-0 tini && apt clean
+# libglib2.0-0 is GLib, for wheels that load it from the system rather than
+# bundling it. Every agent image carries these packages and pulls them on a
+# cold start.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libglib2.0-0 tini && \
+    rm -rf /var/lib/apt/lists/*
 
 # Enable bytecode compilation
 ENV UV_COMPILE_BYTECODE=1
