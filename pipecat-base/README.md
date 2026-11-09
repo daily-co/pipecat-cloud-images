@@ -15,31 +15,29 @@ This image provides the foundational runtime environment for running agents on P
 
 We provide base images for multiple Python versions. See `versions.yaml` for the current list of supported versions.
 
-**Supported Python versions:** 3.11, **3.12 (default/recommended)**, 3.13, 3.14
+**Supported Python versions:** 3.11, 3.12, 3.13, 3.14
 
 0.1.32 was the last release with a Python 3.10 image. Its `-py3.10` tags remain
 published but no longer update.
 
 **Image naming patterns:**
 
-- `dailyco/pipecat-base:latest` - Latest version with Python 3.12 (recommended)
-- `dailyco/pipecat-base:latest-py3.X` - Latest version with specific Python version
-- `dailyco/pipecat-base:VERSION` - Pinned version with Python 3.12 (recommended for production)
-- `dailyco/pipecat-base:VERSION-py3.X` - Pinned version with specific Python version
+- `dailyco/pipecat-base:latest-py3.X` - Latest version with a specific Python version
+- `dailyco/pipecat-base:VERSION-py3.X` - Pinned version with a specific Python version
+- `dailyco/pipecat-base:latest` - Latest version with Python 3.12
+- `dailyco/pipecat-base:VERSION` - Pinned version with Python 3.12
+
+Name the Python in the tag. `latest` and `VERSION` stay on Python 3.12 so that
+agent images already built from them keep their Python; a future release will
+move them to a newer one.
 
 ## Usage
 
-When creating your own agent, use this base image in your Dockerfile:
+When creating your own agent, use this base image in your Dockerfile. New
+projects use Python 3.14, as `pipecat init` does:
 
 ```Dockerfile
-# Using default Python version
-FROM dailyco/pipecat-base:latest
-COPY ./requirements.txt requirements.txt
-RUN pip install --no-cache-dir --upgrade -r requirements.txt
-COPY ./bot.py bot.py
-
-# Or specify a specific Python version
-FROM dailyco/pipecat-base:latest-py3.12
+FROM dailyco/pipecat-base:latest-py3.14
 COPY ./requirements.txt requirements.txt
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 COPY ./bot.py bot.py
@@ -47,14 +45,10 @@ COPY ./bot.py bot.py
 
 ### Versioned Images
 
-For production use, we recommend pinning to specific versions:
+For production use, we recommend pinning to a specific version:
 
 ```Dockerfile
-# Recommended: Pin to specific version (uses Python 3.12)
-FROM dailyco/pipecat-base:VERSION
-
-# Or specify both version and Python version explicitly
-FROM dailyco/pipecat-base:VERSION-py3.12
+FROM dailyco/pipecat-base:VERSION-py3.14
 ```
 
 ### Requirements
