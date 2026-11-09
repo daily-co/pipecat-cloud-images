@@ -178,16 +178,18 @@ jobs:
 
   container-signal-checks:
     runs-on: ${{ matrix.runner }}
-    name: Container Signal Checks (${{ matrix.arch }})
+    name: Container Signal Checks (Python ${{ matrix.python-version }}, ${{ matrix.arch }})
     needs: find-images
-    # One leg per architecture the image ships for. The signal checks don't
-    # depend on the architecture, but the native-library check does: each
-    # wheel ships its native code per architecture. The wheels it loads link
-    # the same system libraries on every Python minor, so the default Python is
-    # enough; build-base still builds every Python.
+    # One leg per Python and architecture the image ships for. The signal
+    # checks depend on neither, but the agent's install and the native-library
+    # check depend on both: each wheel ships its native code per architecture,
+    # and a dependency can publish wheels for one Python and not another, which
+    # the slim image, with no compiler, cannot build from source.
     strategy:
       fail-fast: false
       matrix:
+        python-version: ${{ fromJson(needs.find-images.outputs.python-versions) }}
+        arch: [amd64, arm64]
         include:
           - arch: amd64
             runner: ubuntu-latest
@@ -217,15 +219,15 @@ jobs:
           tags: pipecat-base:signal-check
           build-args: |
             VERSION=signal-check
-            PYTHON_VERSION=${{ needs.find-images.outputs.default-python }}
-            BASE_IMAGE=${{ fromJson(needs.find-images.outputs.base-images)[needs.find-images.outputs.default-python] }}
+            PYTHON_VERSION=${{ matrix.python-version }}
+            BASE_IMAGE=${{ fromJson(needs.find-images.outputs.base-images)[matrix.python-version] }}
 
       - name: Build an agent image on it
         # app.py refuses to start without pipecat-ai, which the base image
         # leaves to the agent image; add it the way the README tells an agent
         # image to. This takes the latest pipecat-ai, as a new agent does;
         # test.yml covers older releases. pipecat-ai needs Python 3.11 or newer,
-        # which default_python in versions.yaml is. The daily and webrtc extras
+        # which every Python in versions.yaml is. The daily and webrtc extras
         # bring the native code the native-library check loads.
         #
         # Publishing waits on this job, so a pipecat-ai release that fails it
