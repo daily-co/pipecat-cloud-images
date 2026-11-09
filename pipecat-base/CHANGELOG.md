@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-11-09
+
+### Changed
+
+- Rebuilt on the upstream images' latest builds: Debian tzdata 2026c-0+deb13u1
+  to 2026e-0+deb13u1 (the 3.11 image), Python 3.11.17 to 3.11.18, uv 0.13.6 to
+  0.13.7.
+
+- Update pip and certifi, which the image keeps at their latest: pip 26.2.2 to
+  26.3.
+
 ## [0.2.12] - 2026-11-04
 
 ### Added
