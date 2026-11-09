@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-09
+
+### Changed
+
+- The image is less than half its previous size, so a pod on a node that
+  doesn't have it yet pulls and unpacks it faster. On arm64, which Daily-hosted
+  regions run, it's 109 MB to download instead of 232 MB, and 346 MB on disk
+  unpacked instead of 710 MB. On amd64 it's 111 MB to download instead of
+  250 MB, and 327 MB on disk instead of 764 MB. System packages are installed
+  without the packages they recommend.
+
+- **Breaking:** apt's package lists are no longer kept in the image, so
+  `apt-get install` fails with `E: Unable to locate package` unless
+  `apt-get update` runs first. In an agent's Dockerfile the build fails: run
+  `apt-get update` in the same `RUN` as the install, as the example below
+  does. In `pre-app.sh`, which runs each time a container starts, the agent
+  starts without the package, or doesn't start at all when the install is the
+  script's last command. Install the package in the agent's Dockerfile
+  instead, so it's in the image before any container starts.
+
+### Removed
+
+- **Breaking:** removed `libgl1`, and the Mesa, LLVM and X11 packages it
+  brought. pipecat-ai 1.6.0 and later don't need it: their `webrtc` extra
+  installs `opencv-python-headless`. Older versions install `opencv-python` and
+  import it when `SmallWebRTCTransport` loads, which now fails with
+  `ImportError: libxcb.so.1: cannot open shared object file`. An agent whose
+  `bot.py` imports `SmallWebRTCTransport` at module level doesn't start, so
+  every session fails. An agent that creates its transport with the runner's
+  `create_transport` starts, and only its SmallWebRTC sessions fail. Upgrade
+  pipecat-ai to 1.6.0 or later, or install `libgl1` in the agent's Dockerfile:
+
+  ```dockerfile
+  RUN apt-get update && \
+      apt-get install -y --no-install-recommends libgl1 && \
+      rm -rf /var/lib/apt/lists/*
+  ```
+
+- **Breaking:** removed the legacy Krisp SDK, which Pipecat Cloud no longer
+  supports: `pipecat_ai_krisp` is no longer linked into the virtual
+  environment, and `libopenblas-dev`, `libresample1` and `libresample-dev` are
+  no longer installed. On pipecat-ai older than 1.0, importing `KrispFilter`
+  now fails with `Missing module: No module named 'pipecat_ai_krisp'`, and an
+  agent whose `bot.py` imports it at module level doesn't start. Move to Krisp
+  VIVA (`KrispVivaFilter`), which is unaffected.
+
+- **Breaking:** the packages that came with these are gone too, among them
+  `libxml2`, `libexpat1`, `libgfortran5` and OpenBLAS. A Python package that
+  loads one of them from the system fails to import, with an `ImportError`
+  that names the missing `.so` file. Install the Debian package that provides
+  it, the same way as `libgl1` above.
+
 ## [0.2.13] - 2026-11-09
 
 ### Changed
