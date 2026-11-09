@@ -24,12 +24,16 @@ published but no longer update.
 
 - `dailyco/pipecat-base:latest-py3.X` - Latest version with a specific Python version
 - `dailyco/pipecat-base:VERSION-py3.X` - Pinned version with a specific Python version
-- `dailyco/pipecat-base:latest` - Latest version with Python 3.12
-- `dailyco/pipecat-base:VERSION` - Pinned version with Python 3.12
+- `dailyco/pipecat-base:latest` - Deprecated: latest version with Python 3.12
+- `dailyco/pipecat-base:VERSION` - Deprecated: pinned version with Python 3.12
 
-Name the Python in the tag. `latest` and `VERSION` stay on Python 3.12 so that
-agent images already built from them keep their Python; a future release will
-move them to a newer one.
+Name the Python in the tag. `latest` and `VERSION` name none, so they stay on
+Python 3.12, and are deprecated: on 2027-04-05 `latest` stops building, and
+later releases publish no `VERSION` tag without `-py3.X`. Version tags already
+published keep building. From 0.4.0, an agent image built from `latest` or a
+`VERSION` tag prints a warning in its build, and logs it when it starts. One
+built from an earlier version tag, such as `0.3.0`, gets no warning: published
+images don't change. To keep Python 3.12, add `-py3.12` to the tag.
 
 ## Usage
 

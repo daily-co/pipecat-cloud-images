@@ -3,7 +3,7 @@
 # local build.
 ARG PYTHON_VERSION=3.12
 ARG BASE_IMAGE=ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-trixie-slim
-FROM ${BASE_IMAGE}
+FROM ${BASE_IMAGE} AS image
 
 # A digest says nothing about the Python behind it, so check the one the image
 # is tagged for is the one it has.
@@ -92,3 +92,17 @@ LABEL daily.co/pipecat-cloud-base-version=$VERSION
 
 # Set default command
 CMD ["sh", "-c", "if [ -f /app/pre-app.sh ]; then sh /app/pre-app.sh; fi && exec python app.py"]
+
+# The image published as `latest` and as the bare version tag, which name no
+# Python and are deprecated. It differs from the image above only in its
+# config, so it adds nothing to pull. The warning prints in the build of an
+# agent image FROM it, and app.py logs it at startup.
+FROM image AS bare-tags
+ARG PYTHON_VERSION
+ARG VERSION
+ENV PCC_TAG_DEPRECATION="dailyco/pipecat-base:latest and the version tags without -py3.X are deprecated: on 2027-04-05 latest stops building, and later releases publish no tag without -py3.X. This image runs Python ${PYTHON_VERSION}: to keep it, build FROM dailyco/pipecat-base:latest-py${PYTHON_VERSION}, or ${VERSION}-py${PYTHON_VERSION} to pin this release."
+ONBUILD RUN echo "warning: $PCC_TAG_DEPRECATION" >&2
+
+# The image a build without --target produces, as CI's checks and a local
+# build take it.
+FROM image

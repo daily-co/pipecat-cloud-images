@@ -181,6 +181,9 @@ for _warning in _session_types.warnings:
     logger.warning(_warning)
 if _capabilities_warning:
     logger.warning(_capabilities_warning)
+# Set by the image published under the deprecated tags (see the Dockerfile).
+if environ.get("PCC_TAG_DEPRECATION"):
+    logger.warning(environ["PCC_TAG_DEPRECATION"])
 
 
 # Filter out noisy Kubernetes probe requests from uvicorn access logs
