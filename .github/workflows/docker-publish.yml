@@ -222,6 +222,38 @@ jobs:
             PYTHON_VERSION=${{ matrix.python-version }}
             BASE_IMAGE=${{ fromJson(needs.find-images.outputs.base-images)[matrix.python-version] }}
 
+      # The deprecated tags' image, which build-base publishes from the default
+      # Python's leg. Its layers are the build above's.
+      - name: Build the deprecated tags' image (loaded locally)
+        if: matrix.python-version == needs.find-images.outputs.default-python
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./pipecat-base
+          target: bare-tags
+          load: true
+          tags: pipecat-base:bare-tags
+          build-args: |
+            VERSION=signal-check
+            PYTHON_VERSION=${{ matrix.python-version }}
+            BASE_IMAGE=${{ fromJson(needs.find-images.outputs.base-images)[matrix.python-version] }}
+
+      - name: Check the deprecation warning
+        if: matrix.python-version == needs.find-images.outputs.default-python
+        # Its ONBUILD runs in an agent's build, not in this image's, so only a
+        # build FROM it shows that agents on the deprecated tags still build,
+        # and see the warning. The image the -py3.X tags carry must have
+        # neither the ONBUILD nor the warning.
+        run: |
+          warning=$(docker image inspect pipecat-base:bare-tags \
+            | jq -er '.[0].Config.Env[] | select(startswith("PCC_TAG_DEPRECATION=")) | sub("^[^=]*="; "")')
+          log=$(echo "FROM pipecat-base:bare-tags" | docker build --no-cache --progress=plain - 2>&1) \
+            || { echo "$log"; echo "::error::An agent image FROM the deprecated tags fails to build"; exit 1; }
+          grep -qF "warning: $warning" <<< "$log" \
+            || { echo "$log"; echo "::error::An agent image's build does not show the deprecation warning"; exit 1; }
+          docker image inspect pipecat-base:signal-check \
+            | jq -e '.[0].Config | (.OnBuild // []) == [] and all(.Env[]; startswith("PCC_TAG_DEPRECATION=") | not)' > /dev/null \
+            || { echo "::error::The -py3.X tags' image carries the deprecation warning"; exit 1; }
+
       - name: Build an agent image on it
         # app.py refuses to start without pipecat-ai, which the base image
         # leaves to the agent image; add it the way the README tells an agent
