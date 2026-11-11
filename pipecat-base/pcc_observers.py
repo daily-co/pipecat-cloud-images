@@ -18,6 +18,7 @@ failing to start.
 
 import asyncio
 import hashlib
+import importlib
 import json
 import time
 import uuid
@@ -307,6 +308,7 @@ async def _publish_record(event_name: str, record):
 
 async def setup_pipeline_worker(worker):
     """Called by PipelineWorker._load_setup_files() for each worker instance."""
+    _publish_pipeline_info(worker)
     await _setup_transcripts(worker)
     await _setup_startup_timing_observer(worker)
     await _setup_user_bot_latency_observer(worker)
@@ -339,6 +341,124 @@ def _every_processor(processor):
     for child in processor.processors:
         yield child
         yield from _every_processor(child)
+
+
+# The most components one pipeline_info record lists, which keeps it well inside
+# the publisher's 10 KB limit however large a pipeline grows.
+_MAX_COMPONENTS = 50
+
+# What a component is, by the Pipecat base class it derives from, most specific
+# first: every service is an AIService too.
+_COMPONENT_KINDS = (
+    ("pipecat.transports.base_input", "BaseInputTransport", "transport"),
+    ("pipecat.services.stt_service", "STTService", "stt"),
+    ("pipecat.services.llm_service", "LLMService", "llm"),
+    ("pipecat.services.tts_service", "TTSService", "tts"),
+    ("pipecat.services.ai_service", "AIService", "service"),
+)
+
+# pipeline_info publishes in flight, held so a task is not collected before it
+# has sent.
+_publishing: set = set()
+
+
+def _component_kinds() -> list[tuple[type, str]]:
+    kinds = []
+    for module, name, kind in _COMPONENT_KINDS:
+        try:
+            kinds.append((getattr(importlib.import_module(module), name), kind))
+        except Exception:
+            continue
+    return kinds
+
+
+def _pipecat_class(cls: type) -> type | None:
+    """The nearest class in ``cls``'s ancestry that Pipecat itself defines.
+
+    A developer's own classes are their code, so a record names the Pipecat
+    class theirs is built on rather than theirs.
+    """
+    for ancestor in cls.__mro__:
+        if ancestor.__module__.split(".")[0] == "pipecat":
+            return ancestor
+    return None
+
+
+def _model(service) -> str | None:
+    """The model a service was configured with.
+
+    Pipecat 1.x keeps it in ``settings.model``; earlier releases expose
+    ``model_name``. It is the same value `service_latency` already publishes.
+    """
+    model = getattr(getattr(service, "settings", None), "model", None)
+    if not isinstance(model, str):
+        model = getattr(service, "model_name", None)
+    return model if isinstance(model, str) and model else None
+
+
+def _serializer(transport) -> str | None:
+    """The Pipecat serializer class a websocket-style transport frames its media with.
+
+    It is what tells a Twilio call from a Telnyx one on the same transport. The
+    transports keep it on their private params, so a Pipecat that moves it
+    leaves the field out rather than failing.
+    """
+    serializer = getattr(getattr(transport, "_params", None), "serializer", None)
+    if serializer is None:
+        return None
+    cls = _pipecat_class(type(serializer))
+    return cls.__name__ if cls else None
+
+
+def _pipeline_components(pipeline) -> list[dict]:
+    """The transports and services in a pipeline."""
+    kinds = _component_kinds()
+    components = []
+    for processor in _every_processor(pipeline):
+        if len(components) >= _MAX_COMPONENTS:
+            break
+        kind = next((k for base, k in kinds if isinstance(processor, base)), None)
+        cls = type(processor)
+        pipecat_cls = _pipecat_class(cls)
+        if kind is None or pipecat_cls is None:
+            continue
+        component = {"kind": kind, "class": pipecat_cls.__name__}
+        if kind == "transport":
+            serializer = _serializer(processor)
+            if serializer:
+                component["serializer"] = serializer
+        else:
+            model = _model(processor)
+            if model:
+                component["model"] = model
+        if pipecat_cls is not cls:
+            component["custom"] = True
+        components.append(component)
+    return components
+
+
+def _publish_pipeline_info(worker):
+    """Publish the transports and services this worker's pipeline runs.
+
+    One record per worker, named by Pipecat class and configured model. A
+    developer's own classes are never named, and nothing passed to a
+    constructor beyond the model is read. Sent in the background, so a
+    publisher that never answers does not hold up the pipeline's start.
+    """
+    pipeline = getattr(worker, "pipeline", None)
+    if pipeline is None:
+        return
+    try:
+        components = _pipeline_components(pipeline)
+    except Exception as e:
+        logger.warning(f"[pcc-observability] Could not describe the pipeline: {e}")
+        return
+
+    task = asyncio.create_task(
+        pcc_events.publish_event("pipeline_info", {"components": components})
+    )
+    _publishing.add(task)
+    task.add_done_callback(_publishing.discard)
 
 
 async def _setup_transcripts(worker):
