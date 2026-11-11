@@ -9,9 +9,10 @@ in use can be counted across sessions. Pinned here:
 * A developer's own class is reported as the Pipecat class it is built on, and
   marked custom; its name, and the name of any processor of theirs, never
   leaves the pod.
-* The model comes from ``settings.model`` (Pipecat 1.x) or ``model_name``
-  (earlier releases).
-* The component list is capped, so a record stays inside the publisher's limit.
+* The model is read where Pipecat keeps it, from 0.0.104 (the first release
+  that loads the observers) on; a long one is cut short.
+* A record stays inside the publisher's limit, however large the pipeline:
+  components past it are dropped, and the record says so.
 * A pipeline that cannot be described publishes nothing, and does not stop the
   session from starting.
 """
@@ -25,6 +26,7 @@ import pcc_observers
 import pcc_structured_logs
 import pytest
 from pipecat.processors.frame_processor import FrameProcessor
+from pipecat.services.ai_service import AIService
 from pipecat.services.llm_service import LLMService
 from pipecat.services.stt_service import STTService
 from pipecat.services.tts_service import TTSService
@@ -92,8 +94,8 @@ def _instance(cls, **attrs):
 
 
 def _model(model):
-    """What a service holds its model in, for either generation of Pipecat."""
-    return {"_settings": SimpleNamespace(model=model), "_model_name": model}
+    """Where a service holds its model, from Pipecat 0.0.104 on."""
+    return {"_settings": SimpleNamespace(model=model)}
 
 
 def _serializer(name, module):
@@ -206,21 +208,6 @@ def test_a_developers_own_classes_are_never_named(published):
     assert "Acme" not in json.dumps(record)
 
 
-def test_an_older_pipecat_reports_the_model_it_named_model_name(published):
-    # Before 1.x a service had no settings, only model_name.
-    older = type(
-        "DeepgramSTTService",
-        (STTService,),
-        {"__module__": "pipecat.services.deepgram.stt", "processors": [], "model_name": "nova-2"},
-    )
-
-    (record,) = _published_pipeline(published, _Pipeline(_instance(older)))
-
-    assert record["event_properties"]["components"] == [
-        {"kind": "stt", "class": "DeepgramSTTService", "model": "nova-2"}
-    ]
-
-
 def test_a_service_without_a_model_leaves_it_out(published):
     (record,) = _published_pipeline(published, _Pipeline(_deepgram(model=None)))
 
@@ -235,12 +222,92 @@ def test_a_pipeline_without_transports_or_services_still_reports(published):
     assert record["event_properties"] == {"components": []}
 
 
-def test_the_components_listed_are_capped(published):
-    pipeline = _Pipeline(*(_openai() for _ in range(pcc_observers._MAX_COMPONENTS + 10)))
+# What the publisher allows a record's properties, in the publisher's own terms.
+MAX_EVENT_PROPERTIES_LENGTH = 10240
+
+
+def test_a_long_model_is_cut_short(published):
+    (record,) = _published_pipeline(published, _Pipeline(_openai(model="m" * 175)))
+
+    (component,) = record["event_properties"]["components"]
+    assert component["model"] == "m" * pcc_observers._MAX_MODEL_CHARS + "…"
+
+
+def test_a_pipeline_too_large_for_the_publisher_still_reports_what_fits(published):
+    pipeline = _Pipeline(*(_openai(model="m" * 175) for _ in range(200)))
 
     (record,) = _published_pipeline(published, pipeline)
 
-    assert len(record["event_properties"]["components"]) == pcc_observers._MAX_COMPONENTS
+    properties = record["event_properties"]
+    assert len(json.dumps(properties)) <= MAX_EVENT_PROPERTIES_LENGTH
+    assert properties["truncated"] is True
+    assert 0 < len(properties["components"]) < 200
+
+
+def test_a_pipeline_that_fits_is_not_marked_truncated(published):
+    pipeline = _Pipeline(*(_openai() for _ in range(20)))
+
+    (record,) = _published_pipeline(published, pipeline)
+
+    assert "truncated" not in record["event_properties"]
+    assert len(record["event_properties"]["components"]) == 20
+
+
+def test_another_ai_service_is_reported_as_a_service(published):
+    vision = _processor(
+        AIService, "MoondreamService", "pipecat.services.moondream.vision", **_model("moondream2")
+    )
+
+    (record,) = _published_pipeline(published, _Pipeline(vision))
+
+    assert record["event_properties"]["components"] == [
+        {"kind": "service", "class": "MoondreamService", "model": "moondream2"}
+    ]
+
+
+def test_a_serializer_pipecat_did_not_define_is_left_out(published):
+    transport = _processor(
+        BaseInputTransport,
+        "FastAPIWebsocketInputTransport",
+        "pipecat.transports.websocket.fastapi",
+        _params=SimpleNamespace(serializer=_serializer("AcmeWireFormat", "bot")),
+    )
+
+    (record,) = _published_pipeline(published, _Pipeline(transport))
+
+    assert record["event_properties"]["components"] == [
+        {"kind": "transport", "class": "FastAPIWebsocketInputTransport"}
+    ]
+
+
+def _has_service_settings():
+    try:
+        from pipecat.services.settings import LLMSettings  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+@pytest.mark.skipif(
+    not _has_service_settings(),
+    reason="this pipecat-ai has no service settings, and loads no observers",
+)
+def test_a_real_service_reports_the_model_it_was_built_with(published):
+    """Through Pipecat's own constructor, so a move of the model fails here."""
+    from pipecat.services.settings import LLMSettings
+
+    cls = type(
+        "OpenAILLMService",
+        (LLMService,),
+        {"__module__": "pipecat.services.openai.llm", "__abstractmethods__": frozenset()},
+    )
+    service = cls(settings=LLMSettings(model="gpt-4.1"))
+
+    (record,) = _published_pipeline(published, _Pipeline(service))
+
+    assert record["event_properties"]["components"] == [
+        {"kind": "llm", "class": "OpenAILLMService", "model": "gpt-4.1"}
+    ]
 
 
 def test_a_pipeline_that_cannot_be_described_publishes_nothing(published):

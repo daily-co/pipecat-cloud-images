@@ -343,9 +343,15 @@ def _every_processor(processor):
         yield from _every_processor(child)
 
 
-# The most components one pipeline_info record lists, which keeps it well inside
-# the publisher's 10 KB limit however large a pipeline grows.
-_MAX_COMPONENTS = 50
+# The publisher refuses a record whose properties pass 10 KB, losing the whole
+# record. A pipeline_info record is measured as json.dumps writes it, with
+# spaced separators and non-ASCII escaped, which no compact encoding of the same
+# record is longer than.
+_MAX_PROPERTIES_CHARS = 10240
+
+# The longest model name a component carries. Real model identifiers are far
+# shorter; this keeps one unusual name from crowding the others out.
+_MAX_MODEL_CHARS = 100
 
 # What a component is, by the Pipecat base class it derives from, most specific
 # first: every service is an AIService too.
@@ -387,13 +393,17 @@ def _pipecat_class(cls: type) -> type | None:
 def _model(service) -> str | None:
     """The model a service was configured with.
 
-    Pipecat 1.x keeps it in ``settings.model``; earlier releases expose
-    ``model_name``. It is the same value `service_latency` already publishes.
+    Read from the private ``_settings``: Pipecat keeps the model there from
+    0.0.104, the first release that loads these observers, while the public
+    ``settings`` property arrived only in 1.12.0. It is the same value
+    `service_latency` already publishes.
     """
-    model = getattr(getattr(service, "settings", None), "model", None)
-    if not isinstance(model, str):
-        model = getattr(service, "model_name", None)
-    return model if isinstance(model, str) and model else None
+    model = getattr(getattr(service, "_settings", None), "model", None)
+    if not isinstance(model, str) or not model:
+        return None
+    if len(model) > _MAX_MODEL_CHARS:
+        return model[:_MAX_MODEL_CHARS] + "…"
+    return model
 
 
 def _serializer(transport) -> str | None:
@@ -415,8 +425,6 @@ def _pipeline_components(pipeline) -> list[dict]:
     kinds = _component_kinds()
     components = []
     for processor in _every_processor(pipeline):
-        if len(components) >= _MAX_COMPONENTS:
-            break
         kind = next((k for base, k in kinds if isinstance(processor, base)), None)
         cls = type(processor)
         pipecat_cls = _pipecat_class(cls)
@@ -437,6 +445,19 @@ def _pipeline_components(pipeline) -> list[dict]:
     return components
 
 
+def _pipeline_info(components: list[dict]) -> dict:
+    """The record's properties, cut to the publisher's limit.
+
+    A pipeline too large to fit drops components from its end and says so,
+    rather than the publisher refusing the record and losing all of it.
+    """
+    properties = {"components": components}
+    while components and len(json.dumps(properties)) > _MAX_PROPERTIES_CHARS:
+        components.pop()
+        properties["truncated"] = True
+    return properties
+
+
 def _publish_pipeline_info(worker):
     """Publish the transports and services this worker's pipeline runs.
 
@@ -455,7 +476,7 @@ def _publish_pipeline_info(worker):
         return
 
     task = asyncio.create_task(
-        pcc_events.publish_event("pipeline_info", {"components": components})
+        pcc_events.publish_event("pipeline_info", _pipeline_info(components))
     )
     _publishing.add(task)
     task.add_done_callback(_publishing.discard)
