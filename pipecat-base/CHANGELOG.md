@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-11
+
+### Added
+
+- Each session reports the transports and services its pipeline runs, in a new
+  `pipeline_info` record: each transport, STT, LLM and TTS service by its
+  Pipecat class name, with the model a service was configured with and the
+  serializer a websocket transport uses (for example `TwilioFrameSerializer`).
+  A developer's own class is reported as the Pipecat class it builds on and
+  marked `custom`, so their class names are never published. A pipeline too
+  large for the publisher's 10 KB limit reports the components that fit and is
+  marked `truncated`. Requires pipecat-ai 0.0.104 or later, as the other
+  observers do.
+
 ## [0.3.0] - 2026-11-09
 
 ### Changed
