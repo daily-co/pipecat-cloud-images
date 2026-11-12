@@ -142,15 +142,19 @@ _PUBLISHED_FIELDS: dict[str, dict] = {
     },
 }
 
-# Free text that can quote the conversation, published only where the
-# transcript is. An error's message is what the failing processor said went
-# wrong, and a provider's error can echo the text it was asked to handle.
+# What can quote the conversation, published only where the transcript is. An
+# error's message is what the failing processor said went wrong, and a provider's
+# error can echo the text it was asked to handle. A function call's arguments are
+# taken from what was said, its result is what the bot's tool answered, and its
+# error is the exception the tool's handler raised instead.
 _CONTENT_FIELDS: dict[str, dict] = {
     "error": {"message": True},
+    "function_call_event": {"arguments": True, "result": True, "error": True},
 }
 
 # The publisher refuses a record whose properties pass 10 KB, losing the whole
-# record, and a provider's error can quote the request that failed in full.
+# record, and a provider's error can quote the request that failed in full. A
+# value that isn't text is measured as json.dumps writes it, non-ASCII escaped.
 _MAX_CONTENT_CHARS = 2000
 
 # A conversation can pass that limit, so it travels as JSON text cut into parts.
@@ -286,6 +290,24 @@ def _published_fields(event_name: str) -> dict:
     return {**fields, **_CONTENT_FIELDS.get(event_name, {})}
 
 
+def _fit_content(properties: dict, fields) -> None:
+    """Keep each content field inside `_MAX_CONTENT_CHARS`, so none costs the record.
+
+    Text is cut. Any other value, cut, would no longer parse, so one too long is
+    left out, and `<field>_omitted` says so.
+    """
+    for field in fields:
+        if field not in properties:
+            continue
+        value = properties[field]
+        if isinstance(value, str):
+            if len(value) > _MAX_CONTENT_CHARS:
+                properties[field] = value[:_MAX_CONTENT_CHARS] + "…"
+        elif len(json.dumps(value)) > _MAX_CONTENT_CHARS:
+            del properties[field]
+            properties[f"{field}_omitted"] = True
+
+
 async def _publish_record(event_name: str, record):
     """Publish the fields `_published_fields` names for this record.
 
@@ -299,10 +321,7 @@ async def _publish_record(event_name: str, record):
     except Exception as e:
         logger.warning(f"[pcc-observability] Could not serialize {event_name}: {e}")
         return
-    for field in _CONTENT_FIELDS.get(event_name, {}):
-        text = properties.get(field)
-        if isinstance(text, str) and len(text) > _MAX_CONTENT_CHARS:
-            properties[field] = text[:_MAX_CONTENT_CHARS] + "…"
+    _fit_content(properties, _CONTENT_FIELDS.get(event_name, {}))
     await pcc_events.publish_event(event_name, properties)
 
 
@@ -629,9 +648,12 @@ async def _setup_function_call_observer(worker):
         return
 
     # A call's arguments and result carry whatever the conversation was about,
-    # so neither travels here: what a bot's tools were asked and answered belongs
-    # to the bot, unless its developer opts in to publishing whole conversations.
-    observer = FunctionCallObserver(include_arguments=False, include_results=False)
+    # so they travel where the transcript does. `_published_fields` keeps them
+    # behind in a deployment excluding content even if the observer reports them.
+    observer = FunctionCallObserver(
+        include_arguments=not _exclude_content,
+        include_results=not _exclude_content,
+    )
 
     @observer.event_handler("on_function_call_event")
     async def on_function_call_event(observer, event):

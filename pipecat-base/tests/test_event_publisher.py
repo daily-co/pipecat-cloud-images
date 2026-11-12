@@ -14,6 +14,7 @@ import pathlib
 import re
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from typing import Any
 
 import pcc_events
 import pcc_observers
@@ -388,7 +389,8 @@ def test_a_pipecat_without_any_of_them_still_starts(monkeypatch):
 
 
 def test_the_fields_that_can_quote_a_conversation_are_not_published():
-    """What a bot's tools were asked and answered stays with the bot."""
+    """What a bot's tools were asked and answered travels only where the
+    transcript does."""
     published = pcc_observers._PUBLISHED_FIELDS
     assert "arguments" not in published["function_call_event"]
     assert "result" not in published["function_call_event"]
@@ -456,6 +458,166 @@ def test_a_long_message_is_cut_rather_than_costing_the_record(monkeypatch, poste
 def test_content_fields_are_only_ever_added_to_a_record_that_publishes():
     """A content field belongs to a record the list already names."""
     assert set(pcc_observers._CONTENT_FIELDS) <= set(pcc_observers._PUBLISHED_FIELDS)
+
+
+class _FunctionCallEvent(BaseModel):
+    """The shape of Pipecat's FunctionCallEvent."""
+
+    kind: str
+    function_name: str
+    tool_call_id: str
+    timestamp: float
+    arguments: Any | None = None
+    result: Any | None = None
+    error: str | None = None
+
+
+_A_CALL = _FunctionCallEvent(
+    kind="completed",
+    function_name="book_table",
+    tool_call_id="call_1",
+    timestamp=1791890285.169,
+    arguments={"name": "Jamie Lee", "party_size": 4},
+    result={"confirmation": "ABC123"},
+    error="the kitchen is closed",
+)
+
+_CALL_CONTENT = {"arguments", "result", "error"}
+
+
+def test_a_deployment_excluding_content_publishes_a_call_without_its_content(monkeypatch, posted):
+    monkeypatch.setattr(pcc_observers, "_exclude_content", True)
+
+    asyncio.run(pcc_observers._publish_record("function_call_event", _A_CALL))
+
+    properties = posted[0][1]["event_properties"]
+    assert not properties.keys() & _CALL_CONTENT
+    assert properties["function_name"] == "book_table"
+
+
+def test_a_calls_content_travels_where_the_transcript_does(monkeypatch, posted):
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
+
+    asyncio.run(pcc_observers._publish_record("function_call_event", _A_CALL))
+
+    properties = posted[0][1]["event_properties"]
+    assert properties["arguments"] == {"name": "Jamie Lee", "party_size": 4}
+    assert properties["result"] == {"confirmation": "ABC123"}
+    assert properties["error"] == "the kitchen is closed"
+
+
+@pytest.mark.parametrize("field", ["arguments", "result"])
+def test_a_value_too_long_to_publish_whole_is_left_out_and_says_so(monkeypatch, posted, field):
+    """Cut, it would no longer parse as what the tool was asked or answered."""
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
+    long = _A_CALL.model_copy(update={field: {"rows": ["x" * 100] * 200}})
+
+    asyncio.run(pcc_observers._publish_record("function_call_event", long))
+
+    properties = posted[0][1]["event_properties"]
+    assert field not in properties
+    assert properties[f"{field}_omitted"] is True
+    assert len(json.dumps(properties)) < MAX_EVENT_PROPERTIES_LENGTH
+
+
+def test_a_value_exactly_at_the_limit_still_travels(monkeypatch, posted):
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
+    # json.dumps writes {"rows": "…"} with 12 characters around the text.
+    result = {"rows": "x" * (pcc_observers._MAX_CONTENT_CHARS - 12)}
+    assert len(json.dumps(result)) == pcc_observers._MAX_CONTENT_CHARS
+
+    asyncio.run(
+        pcc_observers._publish_record(
+            "function_call_event", _A_CALL.model_copy(update={"result": result})
+        )
+    )
+
+    properties = posted[0][1]["event_properties"]
+    assert properties["result"] == result
+    assert "result_omitted" not in properties
+
+
+def test_a_result_that_is_text_is_cut_like_any_other_text(monkeypatch, posted):
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
+    long = _A_CALL.model_copy(update={"result": "x" * 20_000})
+
+    asyncio.run(pcc_observers._publish_record("function_call_event", long))
+
+    properties = posted[0][1]["event_properties"]
+    assert properties["result"] == "x" * pcc_observers._MAX_CONTENT_CHARS + "…"
+    assert "result_omitted" not in properties
+
+
+def test_everything_a_call_can_carry_at_once_fits_the_publishers_limit(monkeypatch, posted):
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
+    limit = pcc_observers._MAX_CONTENT_CHARS
+    full = _A_CALL.model_copy(
+        update={
+            "arguments": {"q": '"' * (limit // 2 - 10)},
+            "result": '"' * (limit // 2 - 2),
+            "error": '"' * 20_000,
+        }
+    )
+
+    asyncio.run(pcc_observers._publish_record("function_call_event", full))
+
+    properties = posted[0][1]["event_properties"]
+    assert {"arguments", "result", "error"} <= properties.keys()
+    assert properties["error"] == '"' * limit + "…"
+    assert len(json.dumps(properties)) < MAX_EVENT_PROPERTIES_LENGTH
+
+
+_FUNCTION_CALL_OBSERVER = "pipecat.observers.function_call_observer"
+
+
+@pytest.mark.skipif(
+    not _pipecat_has(_FUNCTION_CALL_OBSERVER),
+    reason=f"this pipecat-ai has no {_FUNCTION_CALL_OBSERVER}",
+)
+@pytest.mark.parametrize(
+    ("exclude_content", "expected"),
+    [(True, set()), (False, {"arguments", "result"})],
+)
+def test_the_real_observer_reports_a_calls_content_where_the_transcript_travels(
+    monkeypatch, posted, exclude_content, expected
+):
+    from pipecat.frames.frames import FunctionCallInProgressFrame, FunctionCallResultFrame
+    from pipecat.observers.base_observer import FramePushed
+    from pipecat.processors.frame_processor import FrameDirection
+
+    monkeypatch.setattr(pcc_observers, "_exclude_content", exclude_content)
+    frames = [
+        FunctionCallInProgressFrame(
+            function_name="book_table", tool_call_id="call_1", arguments={"party_size": 4}
+        ),
+        FunctionCallResultFrame(
+            function_name="book_table",
+            tool_call_id="call_1",
+            arguments={"party_size": 4},
+            result={"confirmation": "ABC123"},
+        ),
+    ]
+
+    async def run():
+        worker = _Worker()
+        await pcc_observers._setup_function_call_observer(worker)
+        for frame in frames:
+            await worker.observers[0].on_push_frame(
+                FramePushed(
+                    source=None,
+                    destination=None,
+                    frame=frame,
+                    direction=FrameDirection.DOWNSTREAM,
+                    timestamp=0,
+                )
+            )
+
+    asyncio.run(run())
+
+    reported = set()
+    for _, payload in posted:
+        reported |= payload["event_properties"].keys() & {"arguments", "result"}
+    assert reported == expected
 
 
 def test_every_record_published_names_its_fields():

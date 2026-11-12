@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `function_call_event` records now carry what a call was asked and answered,
+  wherever the transcript is published: `arguments` on the records for a call
+  starting and going in progress, `result` on a completed call's record, and
+  `error` on a failed one's. This starts without any change to a deployment
+  that publishes content. One that excludes content, by the platform's
+  `PCC_EXCLUDE_CONTENT` or by `PCC_WITHHOLD_CONTENT=true`, publishes none of it.
+
+  Arguments or a result longer than 2,000 characters as JSON are left out rather
+  than cut, so what arrives always parses, and the record carries
+  `arguments_omitted: true` or `result_omitted: true` instead. A result or error
+  that is text is cut at 2,000 characters, as an error's message is.
+
 ## [0.4.0] - 2026-11-11
 
 ### Deprecated
