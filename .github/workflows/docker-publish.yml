@@ -178,16 +178,18 @@ jobs:
 
   container-signal-checks:
     runs-on: ${{ matrix.runner }}
-    name: Container Signal Checks (${{ matrix.arch }})
+    name: Container Signal Checks (Python ${{ matrix.python-version }}, ${{ matrix.arch }})
     needs: find-images
-    # One leg per architecture the image ships for. The signal checks don't
-    # depend on the architecture, but the native-library check does: each
-    # wheel ships its native code per architecture. The wheels it loads link
-    # the same system libraries on every Python minor, so the default Python is
-    # enough; build-base still builds every Python.
+    # One leg per Python and architecture the image ships for. The signal
+    # checks depend on neither, but the agent's install and the native-library
+    # check depend on both: each wheel ships its native code per architecture,
+    # and a dependency can publish wheels for one Python and not another, which
+    # the slim image, with no compiler, cannot build from source.
     strategy:
       fail-fast: false
       matrix:
+        python-version: ${{ fromJson(needs.find-images.outputs.python-versions) }}
+        arch: [amd64, arm64]
         include:
           - arch: amd64
             runner: ubuntu-latest
@@ -217,15 +219,15 @@ jobs:
           tags: pipecat-base:signal-check
           build-args: |
             VERSION=signal-check
-            PYTHON_VERSION=${{ needs.find-images.outputs.default-python }}
-            BASE_IMAGE=${{ fromJson(needs.find-images.outputs.base-images)[needs.find-images.outputs.default-python] }}
+            PYTHON_VERSION=${{ matrix.python-version }}
+            BASE_IMAGE=${{ fromJson(needs.find-images.outputs.base-images)[matrix.python-version] }}
 
       - name: Build an agent image on it
         # app.py refuses to start without pipecat-ai, which the base image
         # leaves to the agent image; add it the way the README tells an agent
         # image to. This takes the latest pipecat-ai, as a new agent does;
         # test.yml covers older releases. pipecat-ai needs Python 3.11 or newer,
-        # which default_python in versions.yaml is. The daily and webrtc extras
+        # which every Python in versions.yaml is. The daily and webrtc extras
         # bring the native code the native-library check loads.
         #
         # Publishing waits on this job, so a pipecat-ai release that fails it
@@ -313,8 +315,6 @@ jobs:
           tags: |
             type=raw,value=latest-py${{ matrix.python-version }}
             type=raw,value=${{ needs.find-images.outputs.base-version }}-py${{ matrix.python-version }}
-            type=raw,value=latest,enable=${{ matrix.python-version == needs.find-images.outputs.default-python }}
-            type=raw,value=${{ needs.find-images.outputs.base-version }},enable=${{ matrix.python-version == needs.find-images.outputs.default-python }}
 
       # BuildKit runs the build and does the push, so it holds the Docker Hub
       # credentials as much as the actions do: pinned like them, rather than
@@ -360,18 +360,46 @@ jobs:
             PYTHON_VERSION=${{ matrix.python-version }}
             BASE_IMAGE=${{ fromJson(needs.find-images.outputs.base-images)[matrix.python-version] }}
 
-      - name: Verify the pushed image is multi-arch
+      # `latest` and the bare version tag name no Python, and are deprecated:
+      # they carry the default Python's image, built to the Dockerfile's
+      # bare-tags stage, which warns of it. Its layers are the build above's,
+      # from the builder's cache.
+      - name: Build and push the deprecated tags
+        id: bare-tags
+        if: matrix.python-version == needs.find-images.outputs.default-python
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./pipecat-base
+          target: bare-tags
+          platforms: linux/amd64,linux/arm64
+          push: ${{ needs.find-images.outputs.publish == 'true' }}
+          tags: |
+            dailyco/pipecat-base:latest
+            dailyco/pipecat-base:${{ needs.find-images.outputs.base-version }}
+          labels: ${{ steps.meta.outputs.labels }}
+          sbom: true
+          build-args: |
+            VERSION=${{ needs.find-images.outputs.base-version }}
+            PYTHON_VERSION=${{ matrix.python-version }}
+            BASE_IMAGE=${{ fromJson(needs.find-images.outputs.base-images)[matrix.python-version] }}
+
+      - name: Verify the pushed images are multi-arch
         # Regression guard so a single-arch base cannot land again silently.
         # Attestation manifests show up as unknown/unknown and are filtered out.
+        # Only the default Python's leg pushes the deprecated tags.
         if: needs.find-images.outputs.publish == 'true'
+        env:
+          DIGESTS: ${{ steps.build.outputs.digest }} ${{ steps.bare-tags.outputs.digest }}
         run: |
-          ref="dailyco/pipecat-base@${{ steps.build.outputs.digest }}"
-          archs=$(docker buildx imagetools inspect --raw "$ref" \
-            | jq -r '.manifests[].platform | select(.os != "unknown") | "\(.os)/\(.architecture)"' \
-            | sort -u)
-          echo "platforms: $(echo "$archs" | tr '\n' ' ')"
-          for want in linux/amd64 linux/arm64; do
-            echo "$archs" | grep -qx "$want" || { echo "!! missing $want"; exit 1; }
+          for digest in $DIGESTS; do
+            ref="dailyco/pipecat-base@$digest"
+            archs=$(docker buildx imagetools inspect --raw "$ref" \
+              | jq -r '.manifests[].platform | select(.os != "unknown") | "\(.os)/\(.architecture)"' \
+              | sort -u)
+            echo "$ref platforms: $(echo "$archs" | tr '\n' ' ')"
+            for want in linux/amd64 linux/arm64; do
+              echo "$archs" | grep -qx "$want" || { echo "!! $ref missing $want"; exit 1; }
+            done
           done
 
   tag-release:

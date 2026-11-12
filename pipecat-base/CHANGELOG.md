@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-11
+
+### Deprecated
+
+- `dailyco/pipecat-base:latest` and the version tags without `-py3.X`, such as
+  `dailyco/pipecat-base:0.3.0`, are deprecated. They name no Python, so they
+  stay on Python 3.12. On 2027-04-05 `latest` stops building, and later
+  releases publish no version tag without `-py3.X`; version tags already
+  published keep building. An agent image built from `latest` or `0.4.0`
+  prints a warning in its build, and logs it when it starts. One built from an
+  earlier version tag, such as `0.3.0`, gets no warning: published images don't
+  change. To keep Python 3.12, add `-py3.12` to the tag: `latest-py3.12`, or
+  `VERSION-py3.12` to pin a release. New projects use `latest-py3.14`, as
+  `pipecat init` does.
+
 ## [0.3.1] - 2026-11-11
 
 ### Added
