@@ -142,16 +142,25 @@ _PUBLISHED_FIELDS: dict[str, dict] = {
     },
 }
 
-# Free text that can quote the conversation, published only where the
-# transcript is. An error's message is what the failing processor said went
-# wrong, and a provider's error can echo the text it was asked to handle.
+# What can quote the conversation, published only where the transcript is. An
+# error's message is what the failing processor said went wrong, and a provider's
+# error can echo the text it was asked to handle. A function call's arguments are
+# taken from what was said, its result is what the bot's tool answered, and its
+# error is the exception the tool's handler raised instead.
 _CONTENT_FIELDS: dict[str, dict] = {
     "error": {"message": True},
+    "function_call_event": {"arguments": True, "result": True, "error": True},
 }
 
 # The publisher refuses a record whose properties pass 10 KB, losing the whole
-# record, and a provider's error can quote the request that failed in full.
-_MAX_CONTENT_CHARS = 2000
+# record. A record is measured as json.dumps writes it, with spaced separators and
+# non-ASCII escaped, which no compact encoding of the same record is longer than:
+# not the publisher's JSON.stringify, and not the request aiohttp sends, which
+# adds only the envelope's four short fields.
+_MAX_PROPERTIES_CHARS = 10240
+
+# What ends text that was cut to fit.
+_ELLIPSIS = "…"
 
 # A conversation can pass that limit, so it travels as JSON text cut into parts.
 # json.dumps leaves the text ASCII, and publishing it as a string escapes at most
@@ -286,6 +295,52 @@ def _published_fields(event_name: str) -> dict:
     return {**fields, **_CONTENT_FIELDS.get(event_name, {})}
 
 
+def _cut_to_fit(text: str, room: int) -> str | None:
+    """The longest start of `text` that, ending in `_ELLIPSIS`, json.dumps writes
+    in `room` characters, or `None` when not even the ellipsis fits.
+
+    Measured as written rather than counted, since escaping can make one
+    character twelve: json.dumps escapes each character on its own, so a
+    string's length as written is the sum of its characters'.
+    """
+    budget = room - len(json.dumps(_ELLIPSIS))
+    if budget < 0:
+        return None
+    used = 0
+    for index, char in enumerate(text):
+        used += len(json.dumps(char)) - 2
+        if used > budget:
+            return text[:index] + _ELLIPSIS
+    return text
+
+
+def _fit_content(properties: dict, fields) -> None:
+    """Fit the content fields into what the record has left of `_MAX_PROPERTIES_CHARS`.
+
+    A value that fits travels whole. Text that doesn't is cut. Any other value,
+    cut, would no longer parse, so one that doesn't fit is left out, and
+    `<field>_omitted` says so. If the record still doesn't fit, all of its
+    content is left out, so what the record says about timing and outcome is
+    never lost to it.
+    """
+    content = {field: properties.pop(field) for field in fields if field in properties}
+    for field, value in content.items():
+        # What the record would be with this field empty, less the empty value.
+        room = _MAX_PROPERTIES_CHARS - (len(json.dumps({**properties, field: ""})) - 2)
+        if len(json.dumps(value)) <= room:
+            properties[field] = value
+            continue
+        cut = _cut_to_fit(value, room) if isinstance(value, str) else None
+        if cut is None:
+            properties[f"{field}_omitted"] = True
+        else:
+            properties[field] = cut
+    if len(json.dumps(properties)) > _MAX_PROPERTIES_CHARS:
+        for field in content:
+            properties.pop(field, None)
+            properties[f"{field}_omitted"] = True
+
+
 async def _publish_record(event_name: str, record):
     """Publish the fields `_published_fields` names for this record.
 
@@ -299,10 +354,7 @@ async def _publish_record(event_name: str, record):
     except Exception as e:
         logger.warning(f"[pcc-observability] Could not serialize {event_name}: {e}")
         return
-    for field in _CONTENT_FIELDS.get(event_name, {}):
-        text = properties.get(field)
-        if isinstance(text, str) and len(text) > _MAX_CONTENT_CHARS:
-            properties[field] = text[:_MAX_CONTENT_CHARS] + "…"
+    _fit_content(properties, _CONTENT_FIELDS.get(event_name, {}))
     await pcc_events.publish_event(event_name, properties)
 
 
@@ -342,12 +394,6 @@ def _every_processor(processor):
         yield child
         yield from _every_processor(child)
 
-
-# The publisher refuses a record whose properties pass 10 KB, losing the whole
-# record. A pipeline_info record is measured as json.dumps writes it, with
-# spaced separators and non-ASCII escaped, which no compact encoding of the same
-# record is longer than.
-_MAX_PROPERTIES_CHARS = 10240
 
 # The longest model name a component carries. Real model identifiers are far
 # shorter; this keeps one unusual name from crowding the others out.
@@ -629,9 +675,12 @@ async def _setup_function_call_observer(worker):
         return
 
     # A call's arguments and result carry whatever the conversation was about,
-    # so neither travels here: what a bot's tools were asked and answered belongs
-    # to the bot, unless its developer opts in to publishing whole conversations.
-    observer = FunctionCallObserver(include_arguments=False, include_results=False)
+    # so they travel where the transcript does. `_published_fields` keeps them
+    # behind in a deployment excluding content even if the observer reports them.
+    observer = FunctionCallObserver(
+        include_arguments=not _exclude_content,
+        include_results=not _exclude_content,
+    )
 
     @observer.event_handler("on_function_call_event")
     async def on_function_call_event(observer, event):
