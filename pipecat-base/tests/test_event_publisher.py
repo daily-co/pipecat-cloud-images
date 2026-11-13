@@ -26,6 +26,8 @@ from pydantic import BaseModel
 ISO_8601 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$")
 MAX_STRING_LENGTH = 256
 MAX_EVENT_PROPERTIES_LENGTH = 10240
+# The pod's intake answers 413 to a request body past 16 KB.
+MAX_REQUEST_BYTES = 16384
 
 
 class _Response:
@@ -442,17 +444,36 @@ def test_an_errors_message_travels_where_the_transcript_does(monkeypatch, posted
     assert properties["processor"] == "DailyOutputTransport#0"
 
 
-def test_a_long_message_is_cut_rather_than_costing_the_record(monkeypatch, posted):
-    """A provider's error can quote its whole request; the publisher's 10 KB
-    cap on a record would then lose the error entirely."""
-    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
-    long = _AN_ERROR.model_copy(update={"message": "x" * 20_000})
+def _stringify_length(value) -> int:
+    """The length the publisher measures: JavaScript's JSON.stringify, in UTF-16 code units."""
+    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return len(text.encode("utf-16-le")) // 2
 
-    asyncio.run(pcc_observers._publish_record("error", long))
 
-    message = posted[0][1]["event_properties"]["message"]
-    assert message == "x" * pcc_observers._MAX_CONTENT_CHARS + "…"
-    assert len(json.dumps(posted[0][1]["event_properties"])) < MAX_EVENT_PROPERTIES_LENGTH
+def _assert_accepted(payload):
+    """What both the pod's intake and the publisher will take."""
+    assert _stringify_length(payload["event_properties"]) <= MAX_EVENT_PROPERTIES_LENGTH
+    # aiohttp sends `json=` as json.dumps writes it.
+    assert len(json.dumps(payload).encode()) <= MAX_REQUEST_BYTES
+
+
+def _published_properties(event_name, record):
+    """What publishing one record sends, read back from a fresh session."""
+    posts = []
+
+    class _Session:
+        closed = False
+
+        def post(self, url, json=None):
+            posts.append(json)
+            return _Response()
+
+    pcc_events._get_http_session, saved = (lambda: _Session()), pcc_events._get_http_session
+    try:
+        asyncio.run(pcc_observers._publish_record(event_name, record))
+    finally:
+        pcc_events._get_http_session = saved
+    return posts[0]["event_properties"]
 
 
 def test_content_fields_are_only_ever_added_to_a_record_that_publishes():
@@ -473,7 +494,7 @@ class _FunctionCallEvent(BaseModel):
 
 
 _A_CALL = _FunctionCallEvent(
-    kind="completed",
+    kind="function_call_completed",
     function_name="book_table",
     tool_call_id="call_1",
     timestamp=1791890285.169,
@@ -506,25 +527,92 @@ def test_a_calls_content_travels_where_the_transcript_does(monkeypatch, posted):
     assert properties["error"] == "the kitchen is closed"
 
 
-@pytest.mark.parametrize("field", ["arguments", "result"])
-def test_a_value_too_long_to_publish_whole_is_left_out_and_says_so(monkeypatch, posted, field):
-    """Cut, it would no longer parse as what the tool was asked or answered."""
-    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
-    long = _A_CALL.model_copy(update={field: {"rows": ["x" * 100] * 200}})
+# Each record that carries text, by the field the text is in.
+_TEXT_RECORDS = [
+    ("error", _AN_ERROR, "message"),
+    ("function_call_event", _A_CALL.model_copy(update={"result": None}), "error"),
+    ("function_call_event", _A_CALL.model_copy(update={"error": None}), "result"),
+]
 
-    asyncio.run(pcc_observers._publish_record("function_call_event", long))
+
+@pytest.mark.parametrize(("event_name", "record", "field"), _TEXT_RECORDS)
+@pytest.mark.parametrize(
+    "char",
+    ["x", "\x00", "\n", '"', "\\", "é", " ", "😀"],
+    ids=["ascii", "nul", "newline", "quote", "backslash", "accented", "separator", "astral"],
+)
+def test_long_text_is_cut_to_what_both_limits_accept(
+    monkeypatch, posted, event_name, record, field, char
+):
+    """Escaping can make one character twelve, so text is cut by what it is
+    written as: the pod's intake refuses an emoji-filled request, and the
+    publisher a NUL-filled record, that a character count would let through."""
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
+    # The longest session id the envelope can carry.
+    monkeypatch.setattr(pcc_structured_logs, "_current_session_id", "s" * (MAX_STRING_LENGTH - 1))
+    long = record.model_copy(update={field: char * 20_000})
+
+    asyncio.run(pcc_observers._publish_record(event_name, long))
+
+    payload = posted[0][1]
+    text = payload["event_properties"][field]
+    assert text.endswith("…")
+    assert set(text[:-1]) == {char}
+    assert payload["event_properties"]["timestamp"] == record.timestamp
+    _assert_accepted(payload)
+
+
+def _room(event_name, record, field):
+    """How long, as json.dumps writes it, the field's value can be and still travel whole."""
+    properties = _published_properties(event_name, record.model_copy(update={field: ""}))
+    return pcc_observers._MAX_PROPERTIES_CHARS - (len(json.dumps(properties)) - 2)
+
+
+def test_text_that_fits_exactly_travels_whole_and_one_more_character_is_cut(monkeypatch, posted):
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
+    room = _room("error", _AN_ERROR, "message")
+    # json.dumps writes a string with its two quotes.
+    fits = "x" * (room - 2)
+
+    asyncio.run(
+        pcc_observers._publish_record("error", _AN_ERROR.model_copy(update={"message": fits}))
+    )
+    asyncio.run(
+        pcc_observers._publish_record("error", _AN_ERROR.model_copy(update={"message": fits + "x"}))
+    )
+
+    whole, cut = (payload["event_properties"] for _, payload in posted)
+    assert whole["message"] == fits
+    assert len(json.dumps(whole)) == pcc_observers._MAX_PROPERTIES_CHARS
+    assert cut["message"].endswith("…")
+    assert len(json.dumps(cut)) <= pcc_observers._MAX_PROPERTIES_CHARS
+
+
+def test_text_is_cut_before_a_character_that_does_not_fit_rather_than_inside_it(
+    monkeypatch, posted
+):
+    """An emoji is written as two escapes, twelve characters; half of one is no character."""
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
+    room = _room("error", _AN_ERROR, "message")
+    # Room for the ellipsis and the x's, but not the emoji after them.
+    xs = "x" * (room - len(json.dumps("…")) - 11)
+    message = xs + "😀" + "x" * 100
+
+    asyncio.run(
+        pcc_observers._publish_record("error", _AN_ERROR.model_copy(update={"message": message}))
+    )
 
     properties = posted[0][1]["event_properties"]
-    assert field not in properties
-    assert properties[f"{field}_omitted"] is True
-    assert len(json.dumps(properties)) < MAX_EVENT_PROPERTIES_LENGTH
+    assert properties["message"] == xs + "…"
+    _assert_accepted(posted[0][1])
 
 
-def test_a_value_exactly_at_the_limit_still_travels(monkeypatch, posted):
+def test_a_result_the_record_has_room_for_travels_whole(monkeypatch, posted):
+    """Search results, query rows and API payloads are the calls a dashboard most
+    wants to read, and they run to a few KB."""
     monkeypatch.setattr(pcc_observers, "_exclude_content", False)
-    # json.dumps writes {"rows": "…"} with 12 characters around the text.
-    result = {"rows": "x" * (pcc_observers._MAX_CONTENT_CHARS - 12)}
-    assert len(json.dumps(result)) == pcc_observers._MAX_CONTENT_CHARS
+    result = {"rows": [{"id": index, "name": "x" * 40} for index in range(100)]}
+    assert 5_000 < len(json.dumps(result)) < pcc_observers._MAX_PROPERTIES_CHARS
 
     asyncio.run(
         pcc_observers._publish_record(
@@ -537,34 +625,58 @@ def test_a_value_exactly_at_the_limit_still_travels(monkeypatch, posted):
     assert "result_omitted" not in properties
 
 
-def test_a_result_that_is_text_is_cut_like_any_other_text(monkeypatch, posted):
+def test_a_value_that_fits_exactly_travels_whole(monkeypatch, posted):
     monkeypatch.setattr(pcc_observers, "_exclude_content", False)
-    long = _A_CALL.model_copy(update={"result": "x" * 20_000})
+    record = _A_CALL.model_copy(update={"error": None})
+    # json.dumps writes {"rows": "…"} with 12 characters around the text.
+    result = {"rows": "x" * (_room("function_call_event", record, "result") - 12)}
+
+    asyncio.run(
+        pcc_observers._publish_record(
+            "function_call_event", record.model_copy(update={"result": result})
+        )
+    )
+
+    properties = posted[0][1]["event_properties"]
+    assert properties["result"] == result
+    assert len(json.dumps(properties)) == pcc_observers._MAX_PROPERTIES_CHARS
+
+
+@pytest.mark.parametrize("field", ["arguments", "result"])
+def test_a_value_too_long_to_publish_whole_is_left_out_and_says_so(monkeypatch, posted, field):
+    """Cut, it would no longer parse as what the tool was asked or answered."""
+    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
+    long = _A_CALL.model_copy(update={field: {"rows": ["😀" * 100] * 200}})
 
     asyncio.run(pcc_observers._publish_record("function_call_event", long))
 
     properties = posted[0][1]["event_properties"]
-    assert properties["result"] == "x" * pcc_observers._MAX_CONTENT_CHARS + "…"
-    assert "result_omitted" not in properties
+    assert field not in properties
+    assert properties[f"{field}_omitted"] is True
+    assert properties["kind"] == "function_call_completed"
+    assert properties["timestamp"] == _A_CALL.timestamp
+    _assert_accepted(posted[0][1])
 
 
-def test_everything_a_call_can_carry_at_once_fits_the_publishers_limit(monkeypatch, posted):
-    monkeypatch.setattr(pcc_observers, "_exclude_content", False)
-    limit = pcc_observers._MAX_CONTENT_CHARS
-    full = _A_CALL.model_copy(
-        update={
-            "arguments": {"q": '"' * (limit // 2 - 10)},
-            "result": '"' * (limit // 2 - 2),
-            "error": '"' * 20_000,
-        }
-    )
+def test_content_that_together_does_not_fit_is_all_left_out():
+    """Pipecat reports one content field a record, but a record whose content
+    leaves no room for saying what it left out still keeps its own fields."""
+    # json.dumps writes this as 10,151 characters, the arguments as 69 more and
+    # the result's flag as 24, past the limit; the flags alone fit.
+    properties = {
+        "pad": "x" * 10_140,
+        "arguments": {"a": "y" * 60},
+        "result": {"r": "z" * 100},
+    }
 
-    asyncio.run(pcc_observers._publish_record("function_call_event", full))
+    pcc_observers._fit_content(properties, ["arguments", "result"])
 
-    properties = posted[0][1]["event_properties"]
-    assert {"arguments", "result", "error"} <= properties.keys()
-    assert properties["error"] == '"' * limit + "…"
-    assert len(json.dumps(properties)) < MAX_EVENT_PROPERTIES_LENGTH
+    assert properties == {
+        "pad": "x" * 10_140,
+        "arguments_omitted": True,
+        "result_omitted": True,
+    }
+    assert len(json.dumps(properties)) <= pcc_observers._MAX_PROPERTIES_CHARS
 
 
 _FUNCTION_CALL_OBSERVER = "pipecat.observers.function_call_observer"
@@ -574,27 +686,47 @@ _FUNCTION_CALL_OBSERVER = "pipecat.observers.function_call_observer"
     not _pipecat_has(_FUNCTION_CALL_OBSERVER),
     reason=f"this pipecat-ai has no {_FUNCTION_CALL_OBSERVER}",
 )
-@pytest.mark.parametrize(
-    ("exclude_content", "expected"),
-    [(True, set()), (False, {"arguments", "result"})],
-)
+@pytest.mark.parametrize("exclude_content", [True, False])
 def test_the_real_observer_reports_a_calls_content_where_the_transcript_travels(
-    monkeypatch, posted, exclude_content, expected
+    monkeypatch, posted, exclude_content
 ):
-    from pipecat.frames.frames import FunctionCallInProgressFrame, FunctionCallResultFrame
+    from pipecat.frames.frames import (
+        FunctionCallInProgressFrame,
+        FunctionCallResultFrame,
+        FunctionCallsStartedFrame,
+    )
     from pipecat.observers.base_observer import FramePushed
     from pipecat.processors.frame_processor import FrameDirection
+    from pipecat.services.llm_service import FunctionCallFromLLM
 
     monkeypatch.setattr(pcc_observers, "_exclude_content", exclude_content)
+    arguments = {"party_size": 4}
+    calls = [
+        FunctionCallFromLLM(
+            function_name="book_table", tool_call_id=call, arguments=arguments, context=None
+        )
+        for call in ("call_1", "call_2")
+    ]
     frames = [
-        FunctionCallInProgressFrame(
-            function_name="book_table", tool_call_id="call_1", arguments={"party_size": 4}
+        FunctionCallsStartedFrame(function_calls=calls),
+        *(
+            FunctionCallInProgressFrame(
+                function_name="book_table", tool_call_id=call.tool_call_id, arguments=arguments
+            )
+            for call in calls
         ),
         FunctionCallResultFrame(
             function_name="book_table",
             tool_call_id="call_1",
-            arguments={"party_size": 4},
+            arguments=arguments,
             result={"confirmation": "ABC123"},
+        ),
+        FunctionCallResultFrame(
+            function_name="book_table",
+            tool_call_id="call_2",
+            arguments=arguments,
+            result=None,
+            error="the kitchen is closed",
         ),
     ]
 
@@ -614,10 +746,21 @@ def test_the_real_observer_reports_a_calls_content_where_the_transcript_travels(
 
     asyncio.run(run())
 
-    reported = set()
-    for _, payload in posted:
-        reported |= payload["event_properties"].keys() & {"arguments", "result"}
-    assert reported == expected
+    reported = [
+        (p["kind"], p["tool_call_id"], {f: p[f] for f in p.keys() & _CALL_CONTENT})
+        for p in (payload["event_properties"] for _, payload in posted)
+    ]
+    if exclude_content:
+        assert [content for _, _, content in reported] == [{}] * 6
+        return
+    assert reported == [
+        ("function_call_started", "call_1", {"arguments": arguments}),
+        ("function_call_started", "call_2", {"arguments": arguments}),
+        ("function_call_in_progress", "call_1", {"arguments": arguments}),
+        ("function_call_in_progress", "call_2", {"arguments": arguments}),
+        ("function_call_completed", "call_1", {"result": {"confirmation": "ABC123"}}),
+        ("function_call_failed", "call_2", {"error": "the kitchen is closed"}),
+    ]
 
 
 def test_every_record_published_names_its_fields():

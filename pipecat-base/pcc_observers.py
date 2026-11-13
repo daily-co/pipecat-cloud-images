@@ -153,9 +153,14 @@ _CONTENT_FIELDS: dict[str, dict] = {
 }
 
 # The publisher refuses a record whose properties pass 10 KB, losing the whole
-# record, and a provider's error can quote the request that failed in full. A
-# value that isn't text is measured as json.dumps writes it, non-ASCII escaped.
-_MAX_CONTENT_CHARS = 2000
+# record. A record is measured as json.dumps writes it, with spaced separators and
+# non-ASCII escaped, which no compact encoding of the same record is longer than:
+# not the publisher's JSON.stringify, and not the request aiohttp sends, which
+# adds only the envelope's four short fields.
+_MAX_PROPERTIES_CHARS = 10240
+
+# What ends text that was cut to fit.
+_ELLIPSIS = "…"
 
 # A conversation can pass that limit, so it travels as JSON text cut into parts.
 # json.dumps leaves the text ASCII, and publishing it as a string escapes at most
@@ -290,21 +295,49 @@ def _published_fields(event_name: str) -> dict:
     return {**fields, **_CONTENT_FIELDS.get(event_name, {})}
 
 
-def _fit_content(properties: dict, fields) -> None:
-    """Keep each content field inside `_MAX_CONTENT_CHARS`, so none costs the record.
+def _cut_to_fit(text: str, room: int) -> str | None:
+    """The longest start of `text` that, ending in `_ELLIPSIS`, json.dumps writes
+    in `room` characters, or `None` when not even the ellipsis fits.
 
-    Text is cut. Any other value, cut, would no longer parse, so one too long is
-    left out, and `<field>_omitted` says so.
+    Measured as written rather than counted, since escaping can make one
+    character twelve: json.dumps escapes each character on its own, so a
+    string's length as written is the sum of its characters'.
     """
-    for field in fields:
-        if field not in properties:
+    budget = room - len(json.dumps(_ELLIPSIS))
+    if budget < 0:
+        return None
+    used = 0
+    for index, char in enumerate(text):
+        used += len(json.dumps(char)) - 2
+        if used > budget:
+            return text[:index] + _ELLIPSIS
+    return text
+
+
+def _fit_content(properties: dict, fields) -> None:
+    """Fit the content fields into what the record has left of `_MAX_PROPERTIES_CHARS`.
+
+    A value that fits travels whole. Text that doesn't is cut. Any other value,
+    cut, would no longer parse, so one that doesn't fit is left out, and
+    `<field>_omitted` says so. If the record still doesn't fit, all of its
+    content is left out, so what the record says about timing and outcome is
+    never lost to it.
+    """
+    content = {field: properties.pop(field) for field in fields if field in properties}
+    for field, value in content.items():
+        # What the record would be with this field empty, less the empty value.
+        room = _MAX_PROPERTIES_CHARS - (len(json.dumps({**properties, field: ""})) - 2)
+        if len(json.dumps(value)) <= room:
+            properties[field] = value
             continue
-        value = properties[field]
-        if isinstance(value, str):
-            if len(value) > _MAX_CONTENT_CHARS:
-                properties[field] = value[:_MAX_CONTENT_CHARS] + "…"
-        elif len(json.dumps(value)) > _MAX_CONTENT_CHARS:
-            del properties[field]
+        cut = _cut_to_fit(value, room) if isinstance(value, str) else None
+        if cut is None:
+            properties[f"{field}_omitted"] = True
+        else:
+            properties[field] = cut
+    if len(json.dumps(properties)) > _MAX_PROPERTIES_CHARS:
+        for field in content:
+            properties.pop(field, None)
             properties[f"{field}_omitted"] = True
 
 
@@ -361,12 +394,6 @@ def _every_processor(processor):
         yield child
         yield from _every_processor(child)
 
-
-# The publisher refuses a record whose properties pass 10 KB, losing the whole
-# record. A pipeline_info record is measured as json.dumps writes it, with
-# spaced separators and non-ASCII escaped, which no compact encoding of the same
-# record is longer than.
-_MAX_PROPERTIES_CHARS = 10240
 
 # The longest model name a component carries. Real model identifiers are far
 # shorter; this keeps one unusual name from crowding the others out.
