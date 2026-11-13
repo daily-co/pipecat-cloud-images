@@ -18,10 +18,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that publishes content. One that excludes content, by the platform's
   `PCC_EXCLUDE_CONTENT` or by `PCC_WITHHOLD_CONTENT=true`, publishes none of it.
 
-  Arguments or a result longer than 2,000 characters as JSON are left out rather
-  than cut, so what arrives always parses, and the record carries
+  Content travels whole when the record has room for it, within the publisher's
+  10 KB limit on a record. Arguments or a result that don't fit are left out
+  rather than cut, so what arrives always parses, and the record carries
   `arguments_omitted: true` or `result_omitted: true` instead. A result or error
-  that is text is cut at 2,000 characters, as an error's message is.
+  that is text is cut to fit and ends in `…`.
+
+### Changed
+
+- An `error` record's message is cut to what the record has room for, about
+  10 KB, rather than at 2,000 characters.
+
+### Fixed
+
+- An `error` record whose message was mostly characters JSON escapes, such as
+  emoji or control characters, could be refused whole, losing the error's
+  category and processor too: 2,000 of them could pass the publisher's 10 KB
+  limit on a record, or the pod's 16 KB limit on a request. Text is now
+  measured as JSON writes it.
 
 ## [0.4.0] - 2026-11-11
 
