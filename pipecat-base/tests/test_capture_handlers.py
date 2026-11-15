@@ -7,6 +7,7 @@ exhausting the test runner's memory.
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -154,7 +155,11 @@ def test_adding_a_console_handler_cannot_feed_capture_back(tmp_path, stream, enq
         original = [r for r in matches if r is not custom[0]]
         assert len(original) == 1
         _assert_raw(original[0], "stderr", original[0]["line"])
-        assert original[0]["line"].endswith(f" - {marker}")
+        # CI can force ANSI colors even when stderr is a file. Capture keeps
+        # those original bytes; only normalize SGR for the format assertion.
+        original_line = original[0]["line"]
+        assert (original_line + "\n").encode() in stderr
+        assert re.sub(r"\x1b\[[0-9;]*m", "", original_line).endswith(f" - {marker}")
         assert stdout.count(marker.encode()) == (1 if stream == "stdout" else 0)
         assert stderr.count(marker.encode()) == (2 if stream == "stderr" else 1)
 
