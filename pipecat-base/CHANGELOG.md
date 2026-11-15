@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- With structured log collection enabled, bot modules can remove Loguru's
+  default handler or add stdout/stderr handlers during import without
+  crashing, repeatedly capturing the same output, or stalling startup.
+  Captured output is written independently of the bot's logging handlers and
+  continues to be collected if they are removed.
+
+### Changed
+
+- With structured log collection enabled, import-time console logs are
+  collected as raw stdout/stderr records, retaining their formatted text
+  without separate severity fields. After import, framework logging keeps
+  structured severity and session fields. Its console output is collected
+  once; additional console handlers added by a bot produce their own raw
+  records.
+
 ## [0.4.1] - 2026-11-12
 
 ### Added

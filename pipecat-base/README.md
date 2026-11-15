@@ -131,6 +131,28 @@ variables you can set change what it publishes:
 The [changelog](./CHANGELOG.md) for 0.2.12 describes how to read the published
 records.
 
+### Structured Log Collection
+
+When a region enables log collection (`PCC_LOG_DIR` is set), the image captures
+stdout and stderr, including output written while `bot.py` imports. Capture
+leaves Loguru's handlers alone: bot modules can remove its default handler or
+add console handlers without crashing or feeding captured output back into
+the logger.
+
+During import, console output is collected as `stdout` or `stderr` records.
+These retain the formatted text but have no separate severity field, and
+follow the console handlers' levels. After import, the image configures its
+framework logger; `PIPECAT_LOG_LEVEL` controls its console and structured app
+records, which carry severity and session context. Its console sink bypasses
+capture so these records are collected once. A console handler added by the
+bot after this setup produces additional raw records for the output it writes.
+
+Framework app records are written and flushed synchronously, preserving them
+if the process exits immediately after logging. Captured output, including
+import-time logging, depends on a background thread reading the pipe and is
+best-effort at a hard exit. Both lanes share one file writer, rotating
+`bot.jsonl` at 64 MB and retaining one previous file.
+
 ## Releasing New Versions
 
 **The `version` in `pipecat-base/pyproject.toml` is what releases the image.**

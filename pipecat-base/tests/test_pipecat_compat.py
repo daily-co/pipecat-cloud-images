@@ -764,9 +764,8 @@ class TestProcess:
         ].items()
 
     def test_a_pipecat_that_raises_on_import_is_refused_with_the_lane_on(self, tmp_path):
-        # pipecatcloud 0.4.4, which an agent image may pin, imports pipecat-ai
-        # when preloaded and catches only ImportError; the check still has the
-        # say.
+        # A broken dependency must retain its underlying error when stdout and
+        # stderr are captured, rather than being reported as missing pipecat-ai.
         termination = tmp_path / "termination-log"
         stub = _stub_pipecat(tmp_path / "stub", "0.0.95", "raise RuntimeError('broken build')\n")
         proc = _import_app(
@@ -925,7 +924,8 @@ class TestProcess:
         assert "BOT MODULE IMPORTED" not in proc.stdout + proc.stderr
         assert "pipecat-ai is not installed" in termination.read_text()
 
-    def test_the_bot_module_finds_logging_as_it_left_it(self, tmp_path):
+    @pytest.mark.parametrize("lane", [False, True], ids=["lane-off", "lane-on"])
+    def test_the_bot_module_finds_logging_as_it_left_it(self, tmp_path, lane):
         # A common bot opening; importing pipecatcloud before the bot module
         # would remove the default handler it removes.
         bot = _bot_module(
@@ -941,7 +941,7 @@ class TestProcess:
                 pass
             """,
         )
-        proc = _import_app([bot])
+        proc = _import_app([bot], {"PCC_LOG_DIR": str(tmp_path / "logs")} if lane else {})
         assert proc.returncode == 0, proc.stderr[-2000:]
 
     def test_with_the_lane_unavailable_the_bot_module_finds_logging_as_it_left_it(self, tmp_path):
@@ -963,9 +963,8 @@ class TestProcess:
         assert proc.returncode == 0, proc.stderr[-2000:]
 
     def test_with_the_lane_on_pipecat_logs_its_import_into_the_lane(self, tmp_path):
-        # Whoever imports pipecat-ai first (the check, or a pinned pipecatcloud
-        # 0.4.4 when preloaded), what it logs at import, as its banner, goes through
-        # loguru's handlers of the moment: the lane's, which it must reach.
+        # Before app.py configures framework logging, import-time messages reach
+        # the lane through their original console handler as raw stderr records.
         stub = _stub_pipecat(
             tmp_path / "stub",
             "0.0.76",
@@ -980,16 +979,15 @@ class TestProcess:
             },
         )
         assert proc.returncode == pcc_pipecat_compat.EXIT_CODE, proc.stderr[-2000:]
-        assert {"stream": "app", "line": "PIPECAT IMPORT BANNER"} in [
-            {"stream": r["stream"], "line": r["line"]} for r in _lane(log_dir)
-        ]
+        banner = [r for r in _lane(log_dir) if "PIPECAT IMPORT BANNER" in r["line"]]
+        assert len(banner) == 1
+        assert banner[0]["stream"] == "stderr"
+        assert "level" not in banner[0]
+        assert proc.stderr.count("PIPECAT IMPORT BANNER") == 1
 
     def test_with_the_lane_on_a_bot_importing_pipecatcloud_does_not_flood(self, tmp_path):
-        # Importing pipecatcloud puts a loguru handler on sys.stderr. After the
-        # capture is installed that is a pipe whose lines are logged again into
-        # itself: a 50 ms window of it wrote 43 MB of stderr. The capture
-        # imports pipecatcloud before it starts, so the bot's import finds it
-        # loaded.
+        # Importing pipecatcloud puts a loguru handler on captured stderr.
+        # The pump writes directly to the lane, never back into that handler.
         bot = _bot_module(
             tmp_path / "bot",
             """

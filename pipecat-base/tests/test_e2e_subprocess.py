@@ -57,7 +57,7 @@ CHILD = textwrap.dedent(
     sys.stdout.flush()
 
     time.sleep(0.3)   # let the pump threads drain the pipes
-    logger.remove()   # flush the enqueue file sink
+    logger.remove()
     """
 )
 
@@ -92,6 +92,8 @@ def test_end_to_end(tmp_path):
     records = [
         json.loads(line) for line in (tmp_path / "bot.jsonl").read_text().splitlines() if line
     ]
+    assert len(records) == 4
+    assert len({r["line"] for r in records}) == len(records)
     by_line = {r["line"]: r for r in records}
 
     fw = by_line["framework line"]
@@ -167,6 +169,8 @@ def test_crash_tail_survives_hard_exit(tmp_path):
     records = [
         json.loads(line) for line in (tmp_path / "bot.jsonl").read_text().splitlines() if line
     ]
+    assert len(records) == 3
+    assert len({r["line"] for r in records}) == len(records)
     by_line = {r["line"]: r for r in records}
 
     # The last framework record before death — the whole point of this test.

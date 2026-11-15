@@ -25,6 +25,7 @@ Usage: python3 container_signal_check.py [IMAGE]
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -38,6 +39,8 @@ IMPORTING = "IMPORTING"
 STARTED = "Application startup complete"
 SHUTDOWN = "Application shutdown complete"
 EARLY_EXIT = "SIGTERM received before the server was up"
+IMPORT_LOG = "customer import log"
+MAX_LOG_BYTES = 1_000_000
 
 # Sleeps long enough that nothing exits on its own within the check's timeouts;
 # every container here is killed or signalled explicitly.
@@ -63,21 +66,58 @@ async def bot(args):
     pass
 """
 
+LOGGING_BOT_PY = f"""\
+import sys
+from loguru import logger
+
+logger.remove(0)
+logger.add(sys.stderr, format="{{message}}")
+for index in range(200):
+    logger.info(f"{IMPORT_LOG} {{index}}")
+
+{BOT_PY}
+"""
+
 
 def sh(cmd: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
 def logs(cid: str) -> str:
-    r = sh(["docker", "logs", cid])
+    # Bound feedback-loop failures instead of copying unbounded container
+    # output into this check's memory. Normal checks produce fewer lines.
+    r = sh(["docker", "logs", "--tail", "1000", cid])
     return r.stdout + r.stderr
 
 
-def wait_for(cid: str, marker: str, timeout: float = 60.0) -> None:
+def wait_for(
+    cid: str,
+    marker: str,
+    timeout: float = 60.0,
+    log_dir: str | None = None,
+    captured_marker: str | None = None,
+) -> None:
     """Block until the container logs `marker`, so no check races startup."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if marker in logs(cid):
+        captured = captured_marker is None
+        if log_dir:
+            path = os.path.join(log_dir, "bot.jsonl")
+            if os.path.exists(path):
+                assert os.path.getsize(path) < MAX_LOG_BYTES, "structured log capture flooded"
+                if captured_marker:
+                    with open(path) as file:
+                        content = file.read(MAX_LOG_BYTES + 1)
+                    assert len(content) < MAX_LOG_BYTES, "structured log capture flooded"
+                    # The last write may still be in progress. Only decode
+                    # complete lines, and wait for the stderr pipe's barrier
+                    # before signalling a process whose capture is asynchronous.
+                    complete = content[: content.rfind("\n") + 1]
+                    captured = any(
+                        json.loads(line)["line"] == captured_marker
+                        for line in complete.splitlines()
+                    )
+        if marker in logs(cid) and captured:
             return
         if sh(["docker", "inspect", "-f", "{{.State.Running}}", cid]).stdout.strip() != "true":
             raise AssertionError(f"container exited before {marker!r}:\n{logs(cid)}")
@@ -124,14 +164,34 @@ def run_script_and_sigterm(image: str, script: str) -> tuple[int | None, str]:
 
 
 def run_app_and_sigterm(
-    image: str, *, ready_marker: str, import_delay: str, entrypoint: str | None = None
+    image: str,
+    *,
+    ready_marker: str,
+    import_delay: str,
+    entrypoint: str | None = None,
+    bot_source: str = BOT_PY,
+    log_dir: str | None = None,
+    captured_marker: str | None = None,
 ) -> tuple[int | None, str]:
     """Run the real app.py with a minimal bot.py, SIGTERM it at `ready_marker`."""
     with tempfile.TemporaryDirectory() as tmp:
         bot_path = os.path.join(tmp, "bot.py")
         with open(bot_path, "w") as f:
-            f.write(BOT_PY)
+            f.write(bot_source)
         args = ["-v", f"{bot_path}:/app/bot.py:ro", "-e", f"IMPORT_DELAY={import_delay}"]
+        if log_dir:
+            args += [
+                "-v",
+                f"{log_dir}:/pcc-logs",
+                "-e",
+                "PCC_LOG_DIR=/pcc-logs",
+                "--log-driver",
+                "local",
+                "--log-opt",
+                "max-size=1m",
+                "--log-opt",
+                "max-file=2",
+            ]
         if entrypoint:
             args += ["--entrypoint", entrypoint]
         args.append(image)
@@ -139,7 +199,7 @@ def run_app_and_sigterm(
             args.append("app.py")
         cid = start(args)
         try:
-            wait_for(cid, ready_marker)
+            wait_for(cid, ready_marker, log_dir=log_dir, captured_marker=captured_marker)
             return sigterm_and_wait(cid), logs(cid)
         finally:
             sh(["docker", "rm", "-f", cid])
@@ -223,6 +283,50 @@ def check_graceful_shutdown_after_startup(image: str) -> None:
     print("  ok: SIGTERM after startup drained through uvicorn and exited 0")
 
 
+def _check_log_lane(image: str, *, during_import: bool) -> None:
+    with tempfile.TemporaryDirectory() as log_dir:
+        code, out = run_app_and_sigterm(
+            image,
+            ready_marker=IMPORTING if during_import else STARTED,
+            import_delay="60" if during_import else "0",
+            bot_source=LOGGING_BOT_PY,
+            log_dir=log_dir,
+            captured_marker=f"{IMPORT_LOG} 199",
+        )
+        assert code == 0, f"log-lane agent did not exit cleanly: {code}\n{out}"
+        assert len(out.encode()) < MAX_LOG_BYTES, "console capture flooded"
+        with open(os.path.join(log_dir, "bot.jsonl")) as file:
+            content = file.read(MAX_LOG_BYTES + 1)
+        assert len(content) < MAX_LOG_BYTES, "structured log capture flooded"
+        records = [json.loads(line) for line in content.splitlines()]
+        imported = [record for record in records if IMPORT_LOG in record["line"]]
+        assert [record["line"] for record in imported] == [
+            f"{IMPORT_LOG} {index}" for index in range(200)
+        ], "import logs were lost or duplicated"
+        assert all(record["stream"] == "stderr" and "level" not in record for record in imported)
+        assert [line for line in out.splitlines() if IMPORT_LOG in line] == [
+            f"{IMPORT_LOG} {index}" for index in range(200)
+        ], "console import logs were lost or duplicated"
+        if during_import:
+            assert STARTED not in out, f"server started after early SIGTERM\n{out}"
+            exits = [record for record in records if EARLY_EXIT in record["line"]]
+            assert len(exits) == 1, "early shutdown record was lost or duplicated"
+            assert exits[0]["stream"] == "app" and exits[0]["level"] == "WARNING"
+        else:
+            assert SHUTDOWN in out, f"log-lane agent did not drain through uvicorn\n{out}"
+            assert EARLY_EXIT not in out, f"early handler ran after startup\n{out}"
+
+
+def check_log_lane_during_import(image: str) -> None:
+    _check_log_lane(image, during_import=True)
+    print("  ok: log-lane import handlers emitted once and early SIGTERM exited 0")
+
+
+def check_log_lane_after_startup(image: str) -> None:
+    _check_log_lane(image, during_import=False)
+    print("  ok: log-lane import handlers emitted once and uvicorn drained on SIGTERM")
+
+
 def main() -> int:
     image = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_IMAGE
     print(f"container signal checks against {image}")
@@ -234,6 +338,8 @@ def main() -> int:
         check_early_sigterm_under_tini,
         check_early_sigterm_with_python_as_pid1,
         check_graceful_shutdown_after_startup,
+        check_log_lane_during_import,
+        check_log_lane_after_startup,
     ):
         try:
             check(image)
