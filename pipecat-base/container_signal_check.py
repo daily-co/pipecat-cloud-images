@@ -41,6 +41,7 @@ SHUTDOWN = "Application shutdown complete"
 EARLY_EXIT = "SIGTERM received before the server was up"
 IMPORT_LOG = "customer import log"
 MAX_LOG_BYTES = 1_000_000
+DRAIN_MARKERS = ("PCC_LOG_LANE_DRAIN_STDOUT", "PCC_LOG_LANE_DRAIN_STDERR")
 
 # Sleeps long enough that nothing exits on its own within the check's timeouts;
 # every container here is killed or signalled explicitly.
@@ -67,8 +68,42 @@ async def bot(args):
 """
 
 LOGGING_BOT_PY = f"""\
+import atexit
+import json
+import os
 import sys
+import time
+from pathlib import Path
+
+import pcc_structured_logs as logs
 from loguru import logger
+
+
+def _drain_capture():
+    # Uvicorn's final raw console lines otherwise race daemon-pump teardown.
+    # Drain this fixture's normal exit; early SIGTERM uses os._exit and skips it.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    for fd, marker in ((1, {DRAIN_MARKERS[0]!r}), (2, {DRAIN_MARKERS[1]!r})):
+        os.write(fd, (marker + "\\n").encode())
+    path = Path(os.environ["PCC_LOG_DIR"]) / "bot.jsonl"
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            content = path.read_bytes()
+            complete = content[:content.rfind(b"\\n") + 1]
+            lines = {{json.loads(line)["line"] for line in complete.splitlines()}}
+        except (OSError, ValueError):
+            lines = set()
+        if all(marker in lines for marker in {DRAIN_MARKERS!r}):
+            return
+        time.sleep(0.005)
+    console = logs.console_stream() or sys.__stderr__
+    console.write("Timed out draining the log-lane test fixture's capture pipes\\n")
+    console.flush()
+
+
+atexit.register(_drain_capture)
 
 logger.remove(0)
 logger.add(sys.stderr, format="{{message}}")
@@ -83,11 +118,45 @@ def sh(cmd: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
-def logs(cid: str) -> str:
-    # Bound feedback-loop failures instead of copying unbounded container
-    # output into this check's memory. Normal checks produce fewer lines.
-    r = sh(["docker", "logs", "--tail", "1000", cid])
-    return r.stdout + r.stderr
+def logs(cid: str, timeout: float = 60.0) -> str:
+    """Read all console output under a byte cap, without truncating old lines.
+
+    Spool to temporary files so a capture loop cannot exhaust this check's
+    memory before its size limit or timeout is checked. Both streams count
+    toward the same limit, including a command that exits between polls.
+    """
+    command = ["docker", "logs", cid]
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+
+        def check_size():
+            size = sum(os.fstat(stream.fileno()).st_size for stream in (stdout, stderr))
+            assert size <= MAX_LOG_BYTES, (
+                f"docker logs exceeded {MAX_LOG_BYTES} bytes for {cid}: {size} bytes"
+            )
+
+        proc = subprocess.Popen(command, stdout=stdout, stderr=stderr)
+        try:
+            deadline = time.monotonic() + timeout
+            while proc.poll() is None:
+                check_size()
+                remaining = deadline - time.monotonic()
+                assert remaining > 0, f"docker logs timed out for {cid} after {timeout:g}s"
+                time.sleep(min(0.01, remaining))
+            check_size()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=5)
+
+        stdout.seek(0)
+        stderr.seek(0)
+        output = stdout.read(MAX_LOG_BYTES + 1).decode("utf-8", errors="replace")
+        error = stderr.read(MAX_LOG_BYTES + 1).decode("utf-8", errors="replace")
+        assert proc.returncode == 0, (
+            f"docker logs failed for {cid}: rc={proc.returncode}\n"
+            f"stdout={output!r} stderr={error!r}"
+        )
+        return output + error
 
 
 def wait_for(
@@ -315,6 +384,13 @@ def _check_log_lane(image: str, *, during_import: bool) -> None:
         else:
             assert SHUTDOWN in out, f"log-lane agent did not drain through uvicorn\n{out}"
             assert EARLY_EXIT not in out, f"early handler ran after startup\n{out}"
+            for stream, marker in zip(("stdout", "stderr"), DRAIN_MARKERS):
+                drained = [record for record in records if record["line"] == marker]
+                assert len(drained) == 1, f"{stream} capture did not drain once at normal exit"
+                assert drained[0]["stream"] == stream and "level" not in drained[0]
+                assert out.splitlines().count(marker) == 1, (
+                    f"{stream} drain marker was not forwarded"
+                )
 
 
 def check_log_lane_during_import(image: str) -> None:
