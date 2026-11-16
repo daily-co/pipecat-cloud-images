@@ -174,23 +174,6 @@ def build(cls: type, *, body: Any, **fields: Any):
     return args
 
 
-def preload_pipecatcloud() -> None:
-    """Import pipecatcloud, for pcc_structured_logs.install() to run just
-    before its capture starts.
-
-    pipecatcloud's import replaces loguru's handlers with one on sys.stderr,
-    and once the capture is installed that is the capture's own pipe, whose
-    lines are logged again, into the same pipe: the lane floods, and can fill
-    the pipe and stall startup. Imported first, its handler is among those the
-    capture replaces, and every later import finds it loaded. A failure is
-    left for the checks to report.
-    """
-    try:
-        importlib.import_module("pipecatcloud")
-    except Exception:
-        pass
-
-
 def check_pipecat() -> None:
     """Refuse to start unless pipecat-ai is installed and has runner arguments.
 

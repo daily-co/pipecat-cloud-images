@@ -14,10 +14,9 @@ import pcc_structured_logs
 # Structured log capture (no-op unless PCC_LOG_DIR is set) must install before
 # the customer's bot module is imported below — bot code may print at import
 # time, and those lines must flow through the capture to reach the log lane.
-# pipecatcloud is imported just before the capture starts (see
-# preload_pipecatcloud); without a capture nothing may touch loguru before the
-# bot module, which may remove the default handler at import.
-pcc_structured_logs.install(before_capture=pcc_pipecat_compat.preload_pipecatcloud)
+# Capture leaves loguru untouched: bot modules may remove its default handler
+# or add console handlers at import. Their output is captured directly.
+pcc_structured_logs.install()
 
 # An image whose pipecat-ai cannot serve a session refuses to start, with the
 # reason, rather than failing each session once it serves. pipecat-ai itself
@@ -164,9 +163,8 @@ session_logger_format = (
 )
 log_level = environ.get("PIPECAT_LOG_LEVEL", "DEBUG").upper()
 logger.remove()
-# Console goes to the saved real stderr when capture is active (writing to
-# sys.stderr would loop console output back into the capture); the filter
-# keeps captured stdout/stderr lines from being displayed a second time.
+# Console goes to the saved real stderr when capture is active, so framework
+# records reach the lane once as structured app records, without raw copies.
 logger.add(
     pcc_structured_logs.console_stream() or sys.stderr,
     format=session_logger_format,

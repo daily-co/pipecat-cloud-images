@@ -8,12 +8,13 @@ exactly as before.
 Two lanes feed one JSONL file (``$PCC_LOG_DIR/bot.jsonl``), which an in-pod
 shipper tails:
 
-- **framework lane** — a loguru file sink serializes every ``logger.*`` call.
+- **framework lane** — after app.py configures logging, a loguru sink
+  serializes ``logger.*`` calls at or above ``PIPECAT_LOG_LEVEL``.
 - **capture lane** — ``install()`` dup2's a pipe over the process's stdout and
   stderr file descriptors; pump threads write the original bytes through to
   the real streams (``kubectl logs`` and any node collector see exactly what
-  they saw before) and emit each captured line through loguru tagged
-  ``pcc_stream=stdout|stderr``. Because the customer's bot runs inside this
+  they saw before) and write each captured line directly to the JSONL writer.
+  Because the customer's bot runs inside this
   process, this captures raw ``print()`` output and C-extension writes too.
 
 Record schema (one JSON object per line; the shipper adds pod-constant fields
@@ -27,45 +28,54 @@ like namespace/service/deployment):
                 module-level current session, the latest to start on the pod
     line        the log line body
 
-Recursion safety: a captured line is re-emitted through loguru, so no loguru
-console sink may ever write to the *captured* descriptors — ``install()``
-removes loguru's default sink before capturing, and every console sink must
-use ``console_stream()`` (the saved real stderr) with ``console_filter``
-(which also keeps captured lines from being displayed twice).
+Capture never dispatches through loguru, so customer console handlers cannot
+feed it back into its own pipes. ``install()`` leaves those handlers alone:
+import-time logs reach the file as raw console output. After bot import,
+app.py adds the structured framework sink and renders its console output to
+``console_stream()`` (the saved real stderr), avoiding a second captured copy.
+Additional customer console handlers produce their own raw records.
+``PIPECAT_LOG_LEVEL`` does not filter import-time logging: until app.py's
+post-import setup, the customer's handlers control which messages are emitted
+(loguru's default handler accepts DEBUG and above).
 
-Crash durability: the file sink writes synchronously (one
-line-buffered ``write()`` per record into the OS page cache), so framework-lane
+Crash durability: after app.py configures framework logging, its file sink
+writes and flushes synchronously into the OS page cache, so framework-lane
 lines survive a hard process death (``os._exit``, SIGKILL) the instant the
-``logger.*`` call returns. Capture-lane lines have one unavoidable async hop —
+``logger.*`` call returns. Capture-lane lines, including import-time console
+logging, have one unavoidable async hop —
 the pump thread must read the pipe before the process dies — so a ``print()``
 in the final microseconds before a hard exit is best-effort. Bots that want
-guaranteed dying words should say them through the logger.
+guaranteed dying words should use the configured framework logger.
 """
 
 import json
+import logging
 import os
 import sys
 import threading
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from os import environ
-
-from loguru import logger
 
 # Emission cap per captured line; passthrough is unaffected (raw bytes are
 # always forwarded verbatim).
 _MAX_LINE_BYTES = 16 * 1024
 
 _LOG_FILE_NAME = "bot.jsonl"
-_ROTATION = "64 MB"  # safety valve; the shipper tails continuously
+_ROTATION_BYTES = 64_000_000  # safety valve; the shipper tails continuously
 _RETENTION = 1  # rotated files to keep
+_WRITE_RETRY_SECONDS = 5.0
 
 _log_dir = environ.get("PCC_LOG_DIR")
 _installed = False
 _console_stream = None  # TextIO on the saved real stderr, once installed
 _current_session_id = None  # set by run_bot; the latest session to start on this pod
 _clear_timer = None
+_writer = None
+_writer_lock = threading.Lock()
 
 # The session the running code belongs to. A websocket pod can take its next
 # session while the last one is still finishing, so the slot above can name either.
@@ -149,22 +159,19 @@ def session_scope(session_id):
 
 
 def console_stream():
-    """The stream loguru console sinks must write to.
+    """The real stderr stream, bypassing capture for framework console output.
 
-    After install() the process's real stderr fd is only reachable through
-    this saved stream — writing to ``sys.stderr`` would loop console output
-    back into the capture. Returns None when capture is not installed (use
-    ``sys.stderr`` then).
+    Using this for the framework's console sink avoids capturing a second
+    copy of its structured app records. Customer handlers may still use
+    ``sys.stderr`` safely. Returns None before capture is installed.
     """
     return _console_stream
 
 
 def console_filter(record) -> bool:
-    """Keep captured lines off the console sink.
+    """Keep explicitly tagged raw records off the framework console sink.
 
-    The capture lane already wrote the original bytes through to the real
-    stream; rendering the re-emitted record would display every captured line
-    twice.
+    Capture writes directly to the file now, so it never reaches this filter.
     """
     return "pcc_stream" not in record["extra"]
 
@@ -245,11 +252,109 @@ def write_record(level: str, line: str) -> None:
         pass
 
 
-def _format_record(record) -> str:
-    # Loguru custom-serialization recipe: stash the serialized payload on the
-    # record and reference it from the (brace-safe) format template.
-    record["extra"]["_pcc_serialized"] = _serialize(record)
-    return "{extra[_pcc_serialized]}\n"
+def _report_file_status(message):
+    # Never report a writer failure through a captured descriptor or loguru:
+    # that diagnostic would itself be captured and fail to write again.
+    try:
+        stream = _console_stream or sys.stderr
+        stream.write(f"pcc_structured_logs: {message}\n")
+        stream.flush()
+    except Exception:
+        pass
+
+
+def _report_file_error(error, *, retry=False):
+    status = (
+        f"structured file emission paused; retrying on the next record after {_WRITE_RETRY_SECONDS:g}s"
+        if retry
+        else "structured file emission disabled"
+    )
+    _report_file_status(f"cannot write log file in {_log_dir!r}: {error}; {status}")
+
+
+class _JsonlWriter(RotatingFileHandler):
+    """One synchronous, rotating writer shared by app and capture threads.
+
+    This handler is not attached to the standard-library logger hierarchy.
+    Loguru only owns its adapter, so removing Loguru handlers cannot close
+    this writer or stop capture. Emergency exit records deliberately bypass
+    its lock (see write_record and pcc_early_sigterm).
+
+    After a write error, records are dropped during a five-second cooldown.
+    The next record retries synchronously on a fresh stream; no background
+    timer or replay queue is needed. Failures and recovery are reported to
+    the real stderr, never into capture.
+    """
+
+    def __init__(self, path):
+        super().__init__(
+            path,
+            maxBytes=_ROTATION_BYTES,
+            backupCount=_RETENTION,
+            encoding="utf-8",
+            errors="backslashreplace",
+        )
+        self._retry_at = None
+
+    def write_line(self, serialized: str):
+        record = logging.LogRecord("pcc_structured_logs", 0, "", 0, serialized, (), None)
+        # handle() serializes rotation, writes and flushes across both pumps
+        # and every framework producer. Calling emit() directly would not.
+        self.handle(record)
+
+    def emit(self, record):
+        recovering = self._retry_at is not None
+        if recovering and time.monotonic() < self._retry_at:
+            return
+        self._retry_at = None
+        try:
+            if recovering:
+                self.stream = self._open()
+                # A failed write can leave an incomplete JSON fragment. End
+                # that damaged line without truncating any bytes, so it cannot
+                # swallow the first recovered record. Emergency appends do not
+                # take this lock, so repairing by truncation would be unsafe.
+                with open(self.baseFilename, "rb") as existing:
+                    existing.seek(0, os.SEEK_END)
+                    if existing.tell():
+                        existing.seek(-1, os.SEEK_END)
+                        if existing.read(1) != b"\n":
+                            self.stream.write("\n")
+                            self.stream.flush()
+            super().emit(record)
+        except Exception:
+            self.handleError(record)
+        # The standard handler consumes write errors through handleError(),
+        # which schedules another retry. A normal return alone is not success.
+        if recovering and self._retry_at is None:
+            _report_file_status(f"structured file emission resumed in {_log_dir!r}")
+
+    def handleError(self, record):
+        # Called with the handler lock held. Suppress writes and diagnostics
+        # until the next retry, while pumps keep forwarding console bytes.
+        error = sys.exc_info()[1]
+        self._retry_at = time.monotonic() + _WRITE_RETRY_SECONDS
+        stream, self.stream = self.stream, None
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:
+                pass  # a failed flush/close must not poison the next stream
+        _report_file_error(error, retry=True)
+
+
+def _get_writer():
+    global _writer
+    if not _log_dir:
+        return None
+    with _writer_lock:
+        if _writer is None:
+            try:
+                os.makedirs(_log_dir, exist_ok=True)
+                _writer = _JsonlWriter(os.path.join(_log_dir, _LOG_FILE_NAME))
+            except OSError as error:
+                _report_file_error(error)
+        return _writer
 
 
 def add_file_sink(target_logger, level: str):
@@ -258,7 +363,8 @@ def add_file_sink(target_logger, level: str):
     ``level`` applies to the app lane only — captured raw lines have no level
     and always pass. Returns the sink id, or None when disabled/failed.
     """
-    if not _log_dir:
+    writer = _get_writer()
+    if writer is None:
         return None
     try:
         min_level_no = target_logger.level(level).no
@@ -270,31 +376,15 @@ def add_file_sink(target_logger, level: str):
             return True
         return record["level"].no >= min_level_no
 
-    try:
-        return target_logger.add(
-            os.path.join(_log_dir, _LOG_FILE_NAME),
-            format=_format_record,
-            filter=_file_filter,
-            level=0,
-            rotation=_ROTATION,
-            retention=_RETENTION,
-            encoding="utf-8",
-            # Synchronous on purpose: loguru's file sink is
-            # line-buffered ("a", buffering=1), so each record is one write()
-            # into the OS page cache — which survives os._exit/SIGKILL, letting
-            # the shipper deliver a crashing bot's last words. enqueue=True
-            # routed records through a queue thread that a hard exit destroys,
-            # losing exactly the final-burst lines the crash tail exists for.
-            # Cost: µs-scale file I/O on the emitting thread — negligible at
-            # bot logging volumes.
-            enqueue=False,
-        )
-    except OSError as e:
-        (_console_stream or sys.stderr).write(
-            f"pcc_structured_logs: cannot open log file in {_log_dir!r}: {e}; "
-            "structured file emission disabled\n"
-        )
-        return None
+    return target_logger.add(
+        lambda message: writer.write_line(_serialize(message.record)),
+        format="{message}",
+        filter=_file_filter,
+        level=0,
+        # The shared writer flushes on the emitting thread, preserving dying
+        # words even when os._exit/SIGKILL immediately follows logger.*().
+        enqueue=False,
+    )
 
 
 class _LineAssembler:
@@ -344,27 +434,8 @@ def _write_all(fd: int, data: bytes):
         view = view[written:]
 
 
-def _route_loguru():
-    # Loguru's default sink writes to sys.stderr, which is about to become a
-    # captured pipe — that would echo every captured line back into the
-    # capture (unbounded recursion). Replace it with a bootstrap console sink
-    # on the saved stream + the file sink, so lines emitted before app.py's
-    # own logger setup (e.g. during bot import) are visible and shipped.
-    # app.py's logger.remove()/add() later replaces both, preserving today's
-    # sink-reset semantics.
-    logger.remove()
-    logger.add(
-        _console_stream,
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
-        level=environ.get("PIPECAT_LOG_LEVEL", "DEBUG").upper(),
-        filter=console_filter,
-    )
-    add_file_sink(logger, environ.get("PIPECAT_LOG_LEVEL", "DEBUG").upper())
-
-
-def _pump(read_fd: int, passthrough_fd: int, stream_name: str):
+def _pump(read_fd: int, passthrough_fd: int, stream_name: str, writer):
     assembler = _LineAssembler()
-    bound = logger.bind(pcc_stream=stream_name)
     while True:
         try:
             chunk = os.read(read_fd, 65536)
@@ -377,30 +448,32 @@ def _pump(read_fd: int, passthrough_fd: int, stream_name: str):
         except OSError:
             pass  # keep emitting even if the real stream is gone
         for line in assembler.feed(chunk):
-            bound.info(line)
+            writer.write_line(
+                _serialize(
+                    {
+                        "time": datetime.now().astimezone(),
+                        "extra": {"pcc_stream": stream_name},
+                        "message": line,
+                    }
+                )
+            )
 
 
-def install(before_capture=None):
-    """Capture stdout/stderr and route loguru off the captured descriptors.
+def install():
+    """Capture stdout/stderr without changing the customer's loguru handlers.
 
     Must run before the customer's bot module is imported (it may print at
     import time). No-op when PCC_LOG_DIR is unset or already installed.
 
-    ``before_capture`` runs once the capture is certain, with loguru already
-    routed here but stderr not yet captured: for an import that puts a loguru
-    handler on ``sys.stderr``, which after the capture is its own pipe. Its
-    handler is replaced before the capture starts.
+    Import-time logging is captured as raw console output, preserving the
+    default handler for bot modules that remove it themselves. Framework
+    structured logging is configured by app.py after the bot module imports.
     """
     global _installed, _console_stream
     if not _log_dir or _installed:
         return
-    try:
-        os.makedirs(_log_dir, exist_ok=True)
-    except OSError as e:
-        sys.stderr.write(
-            f"pcc_structured_logs: cannot create PCC_LOG_DIR {_log_dir!r}: {e}; "
-            "structured log emission disabled\n"
-        )
+    writer = _get_writer()
+    if writer is None:
         return
     _installed = True
 
@@ -410,19 +483,13 @@ def install(before_capture=None):
     saved_stderr = os.dup(2)
     _console_stream = os.fdopen(os.dup(2), "w", buffering=1, encoding="utf-8", errors="replace")
 
-    _route_loguru()
-    if before_capture is not None:
-        # What it logs is shipped; the handlers it leaves are replaced.
-        before_capture()
-        _route_loguru()
-
     for fd, saved_fd, name in ((1, saved_stdout, "stdout"), (2, saved_stderr, "stderr")):
         read_fd, write_fd = os.pipe()
         os.dup2(write_fd, fd)
         os.close(write_fd)
         threading.Thread(
             target=_pump,
-            args=(read_fd, saved_fd, name),
+            args=(read_fd, saved_fd, name, writer),
             name=f"pcc-log-pump-{name}",
             daemon=True,
         ).start()
