@@ -140,18 +140,27 @@ add console handlers without crashing or feeding captured output back into
 the logger.
 
 During import, console output is collected as `stdout` or `stderr` records.
-These retain the formatted text but have no separate severity field, and
-follow the console handlers' levels. After import, the image configures its
-framework logger; `PIPECAT_LOG_LEVEL` controls its console and structured app
-records, which carry severity and session context. Its console sink bypasses
-capture so these records are collected once. A console handler added by the
-bot after this setup produces additional raw records for the output it writes.
+These retain the formatted text but have no separate severity field.
+`PIPECAT_LOG_LEVEL` has no effect until after `bot.py` finishes importing;
+import-time Loguru messages follow the customer's console handlers' levels
+(DEBUG and above for Loguru's default handler). After import, the image
+configures its framework logger; `PIPECAT_LOG_LEVEL` controls its console and
+structured app records, which carry severity and session context. Its console
+sink bypasses capture so these records are collected once. A console handler
+added by the bot after this setup produces additional raw records for the
+output it writes.
 
 Framework app records are written and flushed synchronously, preserving them
 if the process exits immediately after logging. Captured output, including
 import-time logging, depends on a background thread reading the pipe and is
 best-effort at a hard exit. Both lanes share one file writer, rotating
 `bot.jsonl` at 64 MB and retaining one previous file.
+
+If writing the file fails, collection pauses for five seconds. The next
+record after that interval retries on a fresh file stream, and collection
+resumes once writing succeeds. Records dropped during the pause are not
+queued for replay. Failures and recovery are reported on the container's
+real stderr; console output continues to pass through during the pause.
 
 ## Releasing New Versions
 

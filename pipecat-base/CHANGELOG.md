@@ -14,15 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   crashing, repeatedly capturing the same output, or stalling startup.
   Captured output is written independently of the bot's logging handlers and
   continues to be collected if they are removed.
+- A failed structured-log write pauses collection for five seconds before a
+  later record retries, so a transient filesystem error no longer disables
+  collection for the rest of the pod's life. Failures and recovery are
+  reported to the container's real stderr; records dropped during the pause
+  are not queued for replay.
 
 ### Changed
 
 - With structured log collection enabled, import-time console logs are
   collected as raw stdout/stderr records, retaining their formatted text
-  without separate severity fields. After import, framework logging keeps
-  structured severity and session fields. Its console output is collected
-  once; additional console handlers added by a bot produce their own raw
-  records.
+  without separate severity fields. `PIPECAT_LOG_LEVEL` applies only after
+  `bot.py` finishes importing; import-time Loguru messages follow the
+  customer's console handlers' levels, DEBUG and above by default. After
+  import, framework logging keeps structured severity and session fields. Its
+  console output is collected once; additional console handlers added by a
+  bot produce their own raw records.
 
 ## [0.4.1] - 2026-11-12
 

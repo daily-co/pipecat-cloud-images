@@ -8,7 +8,8 @@ exactly as before.
 Two lanes feed one JSONL file (``$PCC_LOG_DIR/bot.jsonl``), which an in-pod
 shipper tails:
 
-- **framework lane** — a loguru file sink serializes every ``logger.*`` call.
+- **framework lane** — after app.py configures logging, a loguru sink
+  serializes ``logger.*`` calls at or above ``PIPECAT_LOG_LEVEL``.
 - **capture lane** — ``install()`` dup2's a pipe over the process's stdout and
   stderr file descriptors; pump threads write the original bytes through to
   the real streams (``kubectl logs`` and any node collector see exactly what
@@ -33,6 +34,9 @@ import-time logs reach the file as raw console output. After bot import,
 app.py adds the structured framework sink and renders its console output to
 ``console_stream()`` (the saved real stderr), avoiding a second captured copy.
 Additional customer console handlers produce their own raw records.
+``PIPECAT_LOG_LEVEL`` does not filter import-time logging: until app.py's
+post-import setup, the customer's handlers control which messages are emitted
+(loguru's default handler accepts DEBUG and above).
 
 Crash durability: after app.py configures framework logging, its file sink
 writes and flushes synchronously into the OS page cache, so framework-lane
@@ -49,6 +53,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
@@ -62,6 +67,7 @@ _MAX_LINE_BYTES = 16 * 1024
 _LOG_FILE_NAME = "bot.jsonl"
 _ROTATION_BYTES = 64_000_000  # safety valve; the shipper tails continuously
 _RETENTION = 1  # rotated files to keep
+_WRITE_RETRY_SECONDS = 5.0
 
 _log_dir = environ.get("PCC_LOG_DIR")
 _installed = False
@@ -246,18 +252,24 @@ def write_record(level: str, line: str) -> None:
         pass
 
 
-def _report_file_error(error):
+def _report_file_status(message):
     # Never report a writer failure through a captured descriptor or loguru:
     # that diagnostic would itself be captured and fail to write again.
     try:
         stream = _console_stream or sys.stderr
-        stream.write(
-            f"pcc_structured_logs: cannot write log file in {_log_dir!r}: {error}; "
-            "structured file emission disabled\n"
-        )
+        stream.write(f"pcc_structured_logs: {message}\n")
         stream.flush()
     except Exception:
         pass
+
+
+def _report_file_error(error, *, retry=False):
+    status = (
+        f"structured file emission paused; retrying on the next record after {_WRITE_RETRY_SECONDS:g}s"
+        if retry
+        else "structured file emission disabled"
+    )
+    _report_file_status(f"cannot write log file in {_log_dir!r}: {error}; {status}")
 
 
 class _JsonlWriter(RotatingFileHandler):
@@ -267,6 +279,11 @@ class _JsonlWriter(RotatingFileHandler):
     Loguru only owns its adapter, so removing Loguru handlers cannot close
     this writer or stop capture. Emergency exit records deliberately bypass
     its lock (see write_record and pcc_early_sigterm).
+
+    After a write error, records are dropped during a five-second cooldown.
+    The next record retries synchronously on a fresh stream; no background
+    timer or replay queue is needed. Failures and recovery are reported to
+    the real stderr, never into capture.
     """
 
     def __init__(self, path):
@@ -277,7 +294,7 @@ class _JsonlWriter(RotatingFileHandler):
             encoding="utf-8",
             errors="backslashreplace",
         )
-        self._failed = False
+        self._retry_at = None
 
     def write_line(self, serialized: str):
         record = logging.LogRecord("pcc_structured_logs", 0, "", 0, serialized, (), None)
@@ -286,14 +303,44 @@ class _JsonlWriter(RotatingFileHandler):
         self.handle(record)
 
     def emit(self, record):
-        if not self._failed:
+        recovering = self._retry_at is not None
+        if recovering and time.monotonic() < self._retry_at:
+            return
+        self._retry_at = None
+        try:
+            if recovering:
+                self.stream = self._open()
+                # A failed write can leave an incomplete JSON fragment. End
+                # that damaged line without truncating any bytes, so it cannot
+                # swallow the first recovered record. Emergency appends do not
+                # take this lock, so repairing by truncation would be unsafe.
+                with open(self.baseFilename, "rb") as existing:
+                    existing.seek(0, os.SEEK_END)
+                    if existing.tell():
+                        existing.seek(-1, os.SEEK_END)
+                        if existing.read(1) != b"\n":
+                            self.stream.write("\n")
+                            self.stream.flush()
             super().emit(record)
+        except Exception:
+            self.handleError(record)
+        # The standard handler consumes write errors through handleError(),
+        # which schedules another retry. A normal return alone is not success.
+        if recovering and self._retry_at is None:
+            _report_file_status(f"structured file emission resumed in {_log_dir!r}")
 
     def handleError(self, record):
-        # Called with the handler lock held. Stop file emission on failure,
-        # while pumps keep forwarding the original bytes to the real console.
-        self._failed = True
-        _report_file_error(sys.exc_info()[1])
+        # Called with the handler lock held. Suppress writes and diagnostics
+        # until the next retry, while pumps keep forwarding console bytes.
+        error = sys.exc_info()[1]
+        self._retry_at = time.monotonic() + _WRITE_RETRY_SECONDS
+        stream, self.stream = self.stream, None
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:
+                pass  # a failed flush/close must not poison the next stream
+        _report_file_error(error, retry=True)
 
 
 def _get_writer():
