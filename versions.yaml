@@ -11,7 +11,7 @@ base:
   # from; with a digest present, Docker pulls by the digest alone. Every
   # version in python_versions needs an entry.
   base_images:
-    '3.11': ghcr.io/astral-sh/uv:python3.11-trixie-slim@sha256:4eaed98894a3c03831974885ca37f5d9b795514173714162a25c0d45d68a4da4
-    '3.12': ghcr.io/astral-sh/uv:python3.12-trixie-slim@sha256:d4a752dd52f42e0c508bb0b6a912f15922bb32e42f66af30671c3fdc0d759f21
-    '3.13': ghcr.io/astral-sh/uv:python3.13-trixie-slim@sha256:6ff812e34a0e14b4b8bc9ddf25e77b3e16bac6e0c4d9b67641f40366fa382d4c
-    '3.14': ghcr.io/astral-sh/uv:python3.14-trixie-slim@sha256:e80c05a310400cfc90af00b5b7271ef9ad24816e3265e1162af8a678e1aad099
+    '3.11': ghcr.io/astral-sh/uv:python3.11-trixie-slim@sha256:7a0b97c592d27e887e0bb9be01c45135c8f0fc00719faa19ec1f8cbcc73d9b69
+    '3.12': ghcr.io/astral-sh/uv:python3.12-trixie-slim@sha256:ee8a8854267a3bd09ac0364420803fb74a069068b5fb279a2cf1df664f7273db
+    '3.13': ghcr.io/astral-sh/uv:python3.13-trixie-slim@sha256:9a9f205ad2f9aaf63597afef4042c455392f9253937028264b98226e91c09518
+    '3.14': ghcr.io/astral-sh/uv:python3.14-trixie-slim@sha256:81a1340fea1e72ad4a8e9a016128b0c61041cf182ea49fd788023e52842bc147

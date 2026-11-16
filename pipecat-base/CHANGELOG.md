@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-16
+
+### Changed
+
+- Rebuilt on the upstream images' latest builds: Debian apt 3.0.3 to 3.0.4,
+  Debian tzdata 2026e-0+deb13u1 to 2026f-0+deb13u1, uv 0.13.7 to 0.13.8.
+- With structured log collection enabled, import-time console logs are
+  collected as raw stdout/stderr records, retaining their formatted text
+  without separate severity fields. `PIPECAT_LOG_LEVEL` applies only after
+  `bot.py` finishes importing; import-time Loguru messages follow the
+  customer's console handlers' levels, DEBUG and above by default. After
+  import, framework logging keeps structured severity and session fields. Its
+  console output is collected once; additional console handlers added by a
+  bot produce their own raw records.
+
 ### Fixed
 
 - With structured log collection enabled, bot modules can remove Loguru's
@@ -20,16 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported to the container's real stderr; records dropped during the pause
   are not queued for replay.
 
-### Changed
+### Security
 
-- With structured log collection enabled, import-time console logs are
-  collected as raw stdout/stderr records, retaining their formatted text
-  without separate severity fields. `PIPECAT_LOG_LEVEL` applies only after
-  `bot.py` finishes importing; import-time Loguru messages follow the
-  customer's console handlers' levels, DEBUG and above by default. After
-  import, framework logging keeps structured severity and session fields. Its
-  console output is collected once; additional console handlers added by a
-  bot produce their own raw records.
+- Update dependencies to resolve security vulnerabilities: dnspython 2.9.0 to
+  2.9.2.
 
 ## [0.4.1] - 2026-11-12
 
