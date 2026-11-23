@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-11-23
+
+### Changed
+
+- Rebuilt on the upstream images' latest builds: uv 0.13.8 to 0.13.9.
+
+- Update pip and certifi, which the image keeps at their latest: certifi
+  2026.10.23 to 2026.11.20.
+
 ## [0.4.2] - 2026-11-16
 
 ### Changed
