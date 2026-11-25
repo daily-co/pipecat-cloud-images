@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Each session publishes a `session_end` record when its bot returns, whether
+  it returned, raised or was cancelled, so a reader can tell a session that
+  ended from one still running. It is the session's last record and carries no
+  fields. A session with no `session_end` is still running, was killed, or
+  stopped publishing after 10 failures in a row. The record is sent before the
+  pod is freed, and holds it for 2 seconds at most if the publisher doesn't
+  answer.
+
 ## [0.4.3] - 2026-11-23
 
 ### Changed
