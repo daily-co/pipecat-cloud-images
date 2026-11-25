@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-11-25
+
 ### Added
 
 - Each session publishes a `session_end` record when its bot returns, whether
