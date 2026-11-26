@@ -6,6 +6,7 @@ reader can tell a session that ended from one still running. Pinned here:
 * It is the session's last record, attributed to the session that ran.
 * A bot that raises, or a session cancelled while its bot runs, still ends.
 * A publisher that never answers holds the pod for a moment at most.
+* A cancellation while the record is sent still frees the session.
 * A session that gave up publishing, and the SmallWebRTC request that only
   waits for the connection, publish no ``session_end``.
 """
@@ -205,3 +206,38 @@ async def test_the_request_that_waits_for_webrtc_publishes_no_end(monkeypatch, p
     await _run_session(args, "webrtc")
 
     assert _ends(posted) == []
+
+
+class _RecordingSessionManager:
+    """A session manager that records whether the session was completed."""
+
+    def __init__(self):
+        self.completed = False
+
+    def complete_session(self):
+        self.completed = True
+
+
+@sync
+async def test_a_cancellation_during_the_end_still_frees_the_session(monkeypatch):
+    """What one session stashed must not be handed to the pod's next one."""
+    posted = _publish_to(monkeypatch, _Session(hangs=True))
+    manager = _RecordingSessionManager()
+    monkeypatch.setitem(app.GLOBALS, "session_manager", manager)
+    monkeypatch.setitem(app.GLOBALS, "pipecat_session_body", {"stale": True})
+    monkeypatch.setitem(app.GLOBALS, app._FLOW_CONFIG_KEY, {"stale": True})
+
+    session = asyncio.create_task(app.run_bot(_args()))
+    try:
+        while not _ends(posted):
+            await asyncio.sleep(0)
+        session.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await session
+    finally:
+        for task in list(app._publishing):
+            task.cancel()
+
+    assert manager.completed
+    assert app.GLOBALS["pipecat_session_body"] is None
+    assert app.GLOBALS[app._FLOW_CONFIG_KEY] is None

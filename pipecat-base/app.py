@@ -531,13 +531,18 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
             logger.error(f"Exception running bot(): {_without_relay_url(str(e), relay_url)}")
         finally:
             logger.info(f"Stopping bot session with metadata: {json.dumps(metadata)}")
-            await _publish_session_end()
-            session_manager = GLOBALS.get("session_manager")
-            if session_manager:
-                session_manager.complete_session()
-                GLOBALS["pipecat_session_body"] = None
-                GLOBALS[_FLOW_CONFIG_KEY] = None
-            await _release_session_memory()
+            # Nested so a cancellation landing while the record is sent still
+            # frees the session: skipping it would hand this session's body and
+            # flow to the pod's next one.
+            try:
+                await _publish_session_end()
+            finally:
+                session_manager = GLOBALS.get("session_manager")
+                if session_manager:
+                    session_manager.complete_session()
+                    GLOBALS["pipecat_session_body"] = None
+                    GLOBALS[_FLOW_CONFIG_KEY] = None
+                await _release_session_memory()
 
 
 # When bot() returns, tasks cancelled by the session's teardown still reference
