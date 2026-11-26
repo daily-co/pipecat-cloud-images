@@ -220,6 +220,25 @@ def _publish_session_info() -> None:
     task.add_done_callback(_publishing.discard)
 
 
+# How long a session's end may hold up the pod once bot() has returned. The
+# publisher is the pod's own sidecar, which answers in milliseconds when it is up.
+_SESSION_END_TIMEOUT_SECONDS = 2
+
+
+async def _publish_session_end() -> None:
+    """Publish that the session's bot has returned, waiting at most a moment.
+
+    Awaited before the pod is freed, since a free pod may be stopped at once and
+    this is the record that says the session is complete.
+    """
+    try:
+        await asyncio.wait_for(
+            pcc_events.publish_event("session_end"), _SESSION_END_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError:
+        logger.warning("[pcc-observability] session_end not published: the publisher timed out")
+
+
 # Header carrying the session budget Pipecat Cloud has configured for this
 # service (`maxSessionDuration`). Enforcing it here is the only way the cap can
 # actually stop the bot: the platform can close its own request to us, but when
@@ -512,12 +531,18 @@ async def run_bot(args: SessionArguments, transport_type: Optional[str] = None):
             logger.error(f"Exception running bot(): {_without_relay_url(str(e), relay_url)}")
         finally:
             logger.info(f"Stopping bot session with metadata: {json.dumps(metadata)}")
-            session_manager = GLOBALS.get("session_manager")
-            if session_manager:
-                session_manager.complete_session()
-                GLOBALS["pipecat_session_body"] = None
-                GLOBALS[_FLOW_CONFIG_KEY] = None
-            await _release_session_memory()
+            # Nested so a cancellation landing while the record is sent still
+            # frees the session: skipping it would hand this session's body and
+            # flow to the pod's next one.
+            try:
+                await _publish_session_end()
+            finally:
+                session_manager = GLOBALS.get("session_manager")
+                if session_manager:
+                    session_manager.complete_session()
+                    GLOBALS["pipecat_session_body"] = None
+                    GLOBALS[_FLOW_CONFIG_KEY] = None
+                await _release_session_memory()
 
 
 # When bot() returns, tasks cancelled by the session's teardown still reference
